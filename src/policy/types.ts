@@ -1,3 +1,5 @@
+import type { AuthorizationRequest } from "../types/authorization.js";
+
 /**
  * Core types for the Limekey policy engine.
  * These are intentionally minimal in v0.1 — the goal is a stable contract
@@ -5,18 +7,6 @@
  */
 
 export type Decision = "allow" | "deny" | "step_up";
-
-export interface ToolCall {
-  agentId: string;
-  principal: string;
-  resource: string;
-  toolName: string;
-  arguments: Record<string, unknown>;
-  context: {
-    ts: string;
-    sessionId?: string;
-  };
-}
 
 export interface RuleMatch {
   tool_name?: string;
@@ -38,10 +28,12 @@ export interface PolicyResult {
 }
 
 /**
- * A PolicyEngine turns a ToolCall into a decision. v0.1 ships a YAML-rule
- * implementation; v0.2 adds a Rego/OPA-backed one behind this same
+ * A PolicyEngine turns an AuthorizationRequest into a decision. v0.1 ships a
+ * YAML-rule implementation; v0.2 adds a Rego/OPA-backed one behind this same
  * interface so callers never need to change.
+ *
+ * The engine must never import MCP-specific or HTTP-specific types.
  */
 export interface PolicyEngine {
-  evaluate(call: ToolCall): Promise<PolicyResult>;
+  evaluate(req: AuthorizationRequest): Promise<PolicyResult>;
 }

@@ -25,6 +25,23 @@ export interface LimekeyConfig {
     sink: "file" | "http";
     path: string;
   };
+  /** Present only in proxy mode. When set, Limekey spawns this process and
+   *  acts as a transparent MCP policy enforcement proxy in front of it. */
+  upstream?: UpstreamConfig;
+}
+
+export interface UpstreamConfig {
+  /** Executable to spawn (e.g. "npx"). */
+  command: string;
+  /** Arguments passed to the command (e.g. ["-y", "@modelcontextprotocol/server-github"]). */
+  args: string[];
+  /** Keys to forward from Limekey's env to the upstream process. Secrets stay
+   *  out of the config file — they live in the process environment. */
+  passthrough_env?: string[];
+  /** Seconds to wait for upstream initialize handshake. Default: 10. */
+  startup_timeout: number;
+  /** Per-request timeout in seconds. Default: 30. */
+  request_timeout: number;
 }
 
 export interface ListenAddress {
@@ -84,6 +101,13 @@ function applyDefaults(config: LimekeyConfig): void {
 
   if (!config.audit) config.audit = {} as LimekeyConfig["audit"];
   config.audit.sink ??= "file";
+
+  if (config.upstream) {
+    config.upstream.startup_timeout ??= 10;
+    config.upstream.request_timeout ??= 30;
+    config.upstream.args ??= [];
+    config.upstream.passthrough_env ??= [];
+  }
 }
 
 function validate(config: LimekeyConfig): void {
@@ -103,6 +127,9 @@ function validate(config: LimekeyConfig): void {
   }
   if (config?.audit?.sink === "file") {
     required.push([config?.audit?.path, "audit.path"]);
+  }
+  if (config.upstream !== undefined) {
+    required.push([config.upstream.command, "upstream.command"]);
   }
 
   for (const [value, name] of required) {

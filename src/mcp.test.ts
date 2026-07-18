@@ -226,11 +226,10 @@ describe("Limekey MCP Server", () => {
     const res = JSON.parse(line);
 
     expect(res.id).toBe(4);
-    expect(res.result.isError).toBe(false);
+    expect(res.result.isError).toBe(true);
 
     const content = JSON.parse(res.result.content[0].text);
     expect(content.decision).toBe("deny");
-    expect(content.rule).toBe("default");
   });
 
   it("rejects request with missing token", async () => {

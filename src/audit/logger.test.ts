@@ -18,10 +18,10 @@ function makeTmpDir(): string {
 
 function sampleEvent(overrides: Partial<AuditEvent> = {}): AuditEvent {
   return {
+    request_id: "test-req-uuid-1234",
     ts: "2026-07-17T16:00:00.000Z",
     agent_id: "agent-1",
     principal: "user@example.com",
-    resource: "files://*.csv",
     tool_name: "read_file",
     arguments_hash: "sha256:abc123",
     decision: "allow",
@@ -160,10 +160,10 @@ describe("FileAuditSink", () => {
       const parsed = JSON.parse(content);
 
       const expectedKeys: (keyof AuditEvent)[] = [
+        "request_id",
         "ts",
         "agent_id",
         "principal",
-        "resource",
         "tool_name",
         "arguments_hash",
         "decision",

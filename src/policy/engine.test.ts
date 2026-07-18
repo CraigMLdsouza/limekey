@@ -5,21 +5,22 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import yaml from "js-yaml";
 import { YamlPolicyEngine } from "./engine.js";
-import type { ToolCall, Rule } from "./types.js";
+import type { Rule } from "./types.js";
+import type { AuthorizationRequest } from "../types/authorization.js";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
 
-/** Build a minimal ToolCall with sensible defaults. */
-function makeCall(overrides: Partial<ToolCall> = {}): ToolCall {
+/** Build a minimal AuthorizationRequest with sensible defaults. */
+function makeCall(overrides: Partial<AuthorizationRequest> = {}): AuthorizationRequest {
   return {
-    agentId: "agent-1",
-    principal: "user@example.com",
-    resource: "res://default",
-    toolName: "read_file",
+    requestId: randomUUID(),
+    timestamp: new Date().toISOString(),
+    principal: { agentId: "agent-1", sub: "user@example.com" },
+    tool: "read_file",
     arguments: {},
-    context: { ts: new Date().toISOString() },
+    context: {},
     ...overrides,
   };
 }
@@ -76,7 +77,7 @@ describe("YamlPolicyEngine", () => {
     ]);
 
     const engine = new YamlPolicyEngine(path);
-    const result = await engine.evaluate(makeCall({ toolName: "read_file" }));
+    const result = await engine.evaluate(makeCall({ tool: "read_file" }));
 
     expect(result.decision).toBe("allow");
     expect(result.matchedRule).toBe("allow-read");
@@ -91,7 +92,7 @@ describe("YamlPolicyEngine", () => {
     ]);
 
     const engine = new YamlPolicyEngine(path);
-    const result = await engine.evaluate(makeCall({ toolName: "delete_file" }));
+    const result = await engine.evaluate(makeCall({ tool: "delete_file" }));
 
     expect(result.decision).toBe("deny");
     expect(result.matchedRule).toBe("default");
@@ -110,7 +111,7 @@ describe("YamlPolicyEngine", () => {
     ]);
 
     const engine = new YamlPolicyEngine(path);
-    const result = await engine.evaluate(makeCall({ agentId: "agent-2" }));
+    const result = await engine.evaluate(makeCall({ principal: { agentId: "agent-2", sub: "user@example.com" } }));
 
     expect(result.decision).toBe("allow");
     expect(result.matchedRule).toBe("trusted-agents");
@@ -129,7 +130,7 @@ describe("YamlPolicyEngine", () => {
     ]);
 
     const engine = new YamlPolicyEngine(path);
-    const result = await engine.evaluate(makeCall({ agentId: "agent-unknown" }));
+    const result = await engine.evaluate(makeCall({ principal: { agentId: "agent-unknown", sub: "user@example.com" } }));
 
     expect(result.decision).toBe("deny");
     expect(result.matchedRule).toBe("default");
@@ -148,7 +149,7 @@ describe("YamlPolicyEngine", () => {
     ]);
 
     const engine = new YamlPolicyEngine(path);
-    const result = await engine.evaluate(makeCall({ agentId: "bad-agent" }));
+    const result = await engine.evaluate(makeCall({ principal: { agentId: "bad-agent", sub: "user@example.com" } }));
 
     // The rule should NOT match because the agent is in the exclusion list,
     // so we fall through to default deny.
@@ -169,7 +170,7 @@ describe("YamlPolicyEngine", () => {
     ]);
 
     const engine = new YamlPolicyEngine(path);
-    const result = await engine.evaluate(makeCall({ agentId: "good-agent" }));
+    const result = await engine.evaluate(makeCall({ principal: { agentId: "good-agent", sub: "user@example.com" } }));
 
     expect(result.decision).toBe("allow");
     expect(result.matchedRule).toBe("not-blocked");
@@ -189,7 +190,7 @@ describe("YamlPolicyEngine", () => {
 
     const engine = new YamlPolicyEngine(path);
     const result = await engine.evaluate(
-      makeCall({ principal: "bob@example.com" }),
+      makeCall({ principal: { agentId: "agent-1", sub: "bob@example.com" } }),
     );
 
     expect(result.decision).toBe("allow");
@@ -210,7 +211,7 @@ describe("YamlPolicyEngine", () => {
 
     const engine = new YamlPolicyEngine(path);
     const result = await engine.evaluate(
-      makeCall({ principal: "eve@example.com" }),
+      makeCall({ principal: { agentId: "agent-1", sub: "eve@example.com" } }),
     );
 
     expect(result.decision).toBe("deny");
@@ -230,9 +231,8 @@ describe("YamlPolicyEngine", () => {
     // Should match regardless of what the call looks like.
     const result = await engine.evaluate(
       makeCall({
-        agentId: "any-agent",
-        principal: "anyone@anywhere.com",
-        toolName: "anything",
+        principal: { agentId: "any-agent", sub: "anyone@anywhere.com" },
+        tool: "anything",
       }),
     );
 
@@ -253,7 +253,7 @@ describe("YamlPolicyEngine", () => {
     ]);
 
     const engine = new YamlPolicyEngine(path);
-    const result = await engine.evaluate(makeCall({ toolName: "write_file" }));
+    const result = await engine.evaluate(makeCall({ tool: "write_file" }));
 
     expect(result.decision).toBe("deny");
     expect(result.matchedRule).toBe("default");
@@ -275,21 +275,21 @@ describe("YamlPolicyEngine", () => {
 
     // Correct tool + non-excluded agent → allow
     const allowed = await engine.evaluate(
-      makeCall({ toolName: "read_file", agentId: "good-agent" }),
+      makeCall({ tool: "read_file", principal: { agentId: "good-agent", sub: "user@example.com" } }),
     );
     expect(allowed.decision).toBe("allow");
     expect(allowed.matchedRule).toBe("safe-read");
 
     // Correct tool BUT excluded agent → deny (rule doesn't match)
     const blockedAgent = await engine.evaluate(
-      makeCall({ toolName: "read_file", agentId: "rogue-agent" }),
+      makeCall({ tool: "read_file", principal: { agentId: "rogue-agent", sub: "user@example.com" } }),
     );
     expect(blockedAgent.decision).toBe("deny");
     expect(blockedAgent.matchedRule).toBe("default");
 
     // Wrong tool + non-excluded agent → deny (tool_name mismatch)
     const wrongTool = await engine.evaluate(
-      makeCall({ toolName: "delete_file", agentId: "good-agent" }),
+      makeCall({ tool: "delete_file", principal: { agentId: "good-agent", sub: "user@example.com" } }),
     );
     expect(wrongTool.decision).toBe("deny");
     expect(wrongTool.matchedRule).toBe("default");
@@ -309,7 +309,7 @@ describe("YamlPolicyEngine", () => {
 
     const engine = new YamlPolicyEngine(path);
     const result = await engine.evaluate(
-      makeCall({ toolName: "transfer_funds" }),
+      makeCall({ tool: "transfer_funds" }),
     );
 
     expect(result.decision).toBe("step_up");
@@ -334,7 +334,7 @@ describe("YamlPolicyEngine", () => {
     const engine = new YamlPolicyEngine(path);
     const result = await engine.evaluate(
       makeCall({
-        toolName: "github.get_file",
+        tool: "github.get_file",
         arguments: { owner: "craigmldsouza", repo: "sample", path: "README.md" },
       }),
     );
@@ -359,7 +359,7 @@ describe("YamlPolicyEngine", () => {
     const engine = new YamlPolicyEngine(path);
     const result = await engine.evaluate(
       makeCall({
-        toolName: "github.get_file",
+        tool: "github.get_file",
         arguments: { owner: "craigmldsouza", repo: "other-repo" },
       }),
     );

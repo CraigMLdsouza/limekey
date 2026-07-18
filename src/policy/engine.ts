@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import yaml from "js-yaml";
-import type { PolicyEngine, PolicyResult, Rule, ToolCall } from "./types.js";
+import type { PolicyEngine, PolicyResult, Rule, RuleMatch } from "./types.js";
+import type { AuthorizationRequest } from "../types/authorization.js";
 
 interface RuleFile {
   rules: Rule[];
@@ -19,33 +20,33 @@ export class YamlPolicyEngine implements PolicyEngine {
     this.rules = parsed.rules ?? [];
   }
 
-  async evaluate(call: ToolCall): Promise<PolicyResult> {
+  async evaluate(req: AuthorizationRequest): Promise<PolicyResult> {
     for (const rule of this.rules) {
-      if (this.matches(rule, call)) {
+      if (this.matches(rule, req)) {
         return { decision: rule.effect, matchedRule: rule.name };
       }
     }
     return { decision: "deny", matchedRule: "default" };
   }
 
-  private matches(rule: Rule, call: ToolCall): boolean {
-    const m = rule.match;
+  private matches(rule: Rule, req: AuthorizationRequest): boolean {
+    const m: RuleMatch = rule.match;
 
-    if (m.tool_name !== undefined && m.tool_name !== call.toolName) {
+    if (m.tool_name !== undefined && m.tool_name !== req.tool) {
       return false;
     }
-    if (m.agent_id_in && !m.agent_id_in.includes(call.agentId)) {
+    if (m.agent_id_in && !m.agent_id_in.includes(req.principal.agentId)) {
       return false;
     }
-    if (m.agent_id_not_in && m.agent_id_not_in.includes(call.agentId)) {
+    if (m.agent_id_not_in && m.agent_id_not_in.includes(req.principal.agentId)) {
       return false;
     }
-    if (m.principal_in && !m.principal_in.includes(call.principal)) {
+    if (m.principal_in && !m.principal_in.includes(req.principal.sub)) {
       return false;
     }
     if (m.arguments) {
       for (const [key, val] of Object.entries(m.arguments)) {
-        if (call.arguments?.[key] !== val) {
+        if (req.arguments?.[key] !== val) {
           return false;
         }
       }

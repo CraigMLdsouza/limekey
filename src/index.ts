@@ -9,9 +9,9 @@ import { createGenericOidcValidator } from "./adapters/generic-oidc.js";
 import { createAuth0Validator } from "./adapters/auth0.js";
 import { createWorkosValidator } from "./adapters/workos.js";
 import { YamlPolicyEngine } from "./policy/engine.js";
-import type { ToolCall } from "./policy/types.js";
 import { FileAuditSink, hashArguments } from "./audit/logger.js";
 import { WebhookStepUpProvider } from "./stepup/webhook.js";
+import { buildAuthorizationRequest } from "./proxy/authorization-request.js";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -160,26 +160,25 @@ app.post("/v0/authorize", async (req, reply) => {
     typeof body.session_id === "string" ? body.session_id : undefined;
 
   // --- Policy evaluation ---
-  const call: ToolCall = {
-    agentId: validated.agentId,
-    principal: validated.principal,
-    resource: config.server.resource_id,
+  const authReq = buildAuthorizationRequest(
+    validated.agentId,
+    validated.principal,
     toolName,
-    arguments: args,
-    context: { ts: new Date().toISOString(), sessionId },
-  };
+    args,
+    sessionId,
+  );
 
-  const result = await policyEngine.evaluate(call);
+  const result = await policyEngine.evaluate(authReq);
   let finalDecision = result.decision;
   let stepUpOutcome: { requested: boolean; approved?: boolean } | null = null;
 
   if (result.decision === "step_up") {
     stepUpOutcome = { requested: true };
     const outcome = await stepUp.requestApproval({
-      agentId: call.agentId,
-      principal: call.principal,
-      toolName: call.toolName,
-      argumentsSummary: JSON.stringify(call.arguments).slice(0, 500),
+      agentId: authReq.principal.agentId,
+      principal: authReq.principal.sub,
+      toolName: authReq.tool,
+      argumentsSummary: JSON.stringify(authReq.arguments).slice(0, 500),
     });
     stepUpOutcome.approved = outcome === "approved";
     finalDecision = outcome === "approved" ? "allow" : "deny";
@@ -187,12 +186,12 @@ app.post("/v0/authorize", async (req, reply) => {
 
   // --- Audit (always, regardless of outcome) ---
   await auditSink.write({
-    ts: call.context.ts,
-    agent_id: call.agentId,
-    principal: call.principal,
-    resource: call.resource,
-    tool_name: call.toolName,
-    arguments_hash: hashArguments(call.arguments),
+    request_id: authReq.requestId,
+    ts: authReq.timestamp,
+    agent_id: authReq.principal.agentId,
+    principal: authReq.principal.sub,
+    tool_name: authReq.tool,
+    arguments_hash: hashArguments(authReq.arguments),
     decision: finalDecision,
     matched_rule: result.matchedRule,
     step_up: stepUpOutcome,
@@ -202,7 +201,7 @@ app.post("/v0/authorize", async (req, reply) => {
   if (finalDecision === "allow") {
     return reply.code(200).send({ decision: "allow" });
   }
-  return reply.code(403).send({ decision: "deny", rule: result.matchedRule });
+  return reply.code(403).send({ decision: "deny" });
 });
 
 // ---------------------------------------------------------------------------

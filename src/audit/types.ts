@@ -5,14 +5,15 @@ import type { Decision } from "../policy/types.js";
  * JSON.stringify produces spec-compliant JSONL without a mapping layer.
  */
 export interface AuditEvent {
+  /** UUID from AuthorizationRequest — correlates this event with client traces. */
+  request_id: string;
   ts: string;
   agent_id: string;
   principal: string;
-  resource: string;
   tool_name: string;
   arguments_hash: string;
-  decision: Decision;
-  matched_rule: string;
+  decision: Decision | "upstream_failure";
+  matched_rule: string | null;
   step_up: { requested: boolean; approved?: boolean } | null;
   latency_ms: number;
 }
