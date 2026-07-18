@@ -136,6 +136,47 @@ The compose setup exposes port `8443` and configures a healthcheck checking `/he
 
 ---
 
+## Model Context Protocol (MCP) Server
+
+Limekey can run as a standard `stdio`-based MCP server. This allows you to mount it directly inside Cursor, Claude Desktop, or custom agent frameworks to evaluate policy checks as standard tool calls.
+
+To run the MCP server:
+```bash
+npm run build
+npm run mcp
+```
+
+### Integration with Claude Desktop / Cursor
+
+Add the following configuration to your `claude_desktop_config.json` or Cursor settings:
+
+```json
+{
+  "mcpServers": {
+    "limekey": {
+      "command": "node",
+      "args": ["/absolute/path/to/limekey/dist/mcp.js"],
+      "env": {
+        "LIMEKEY_CONFIG": "/absolute/path/to/limekey/limekey.config.yaml"
+      }
+    }
+  }
+}
+```
+
+### Exposed Tools
+
+#### `authorize`
+Evaluate policy permissions for an agent tool execution check.
+*   **Arguments:**
+    *   `token` (string, required): Bearer access token representing the user and agent.
+    *   `tool_name` (string, required): Name of the tool to authorize.
+    *   `arguments` (object, optional): Arguments payload passed to the tool.
+    *   `session_id` (string, optional): Session identifier.
+*   **Returns:** A JSON string payload representing the decision (`allow` or `deny` with the matched rule).
+
+---
+
 ## API Reference
 
 ### `GET /health`
