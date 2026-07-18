@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/CraigMLdsouza/limekey/refs/heads/main/limekey_banner.png" alt="Limekey Logo" width="150" style="border-radius: 12px; margin-bottom: 20px;" />
+  <img src="https://raw.githubusercontent.com/CraigMLdsouza/limekey/refs/heads/main/limekey_banner.png" alt="Limekey Logo" style="border-radius: 12px; margin-bottom: 20px;" />
 </p>
 
 # Limekey — Agent Authorization Gateway
