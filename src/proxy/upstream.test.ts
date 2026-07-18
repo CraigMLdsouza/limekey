@@ -206,4 +206,68 @@ describe("UpstreamManager", () => {
     await crashPromise;
     await expect(sendPromise).rejects.toThrow(/exited/i);
   });
+
+  it("preserves command, arguments, and forwards environment variables without mutation", async () => {
+    const script = `
+      const rl = require("readline").createInterface({ input: process.stdin });
+      rl.on("line", (line) => {
+        try {
+          const req = JSON.parse(line);
+          if (req.method === "initialize") {
+            process.stdout.write(JSON.stringify({
+              jsonrpc: "2.0",
+              id: req.id,
+              result: {
+                protocolVersion: "2024-11-05",
+                capabilities: {},
+                serverInfo: { name: "test", version: "1" }
+              }
+            }) + "\\n");
+          } else if (req.method === "get_spawn_details") {
+            process.stdout.write(JSON.stringify({
+              jsonrpc: "2.0",
+              id: req.id,
+              result: {
+                argv: process.argv,
+                env: process.env
+              }
+            }) + "\\n");
+          }
+        } catch {}
+      });
+    `;
+
+    process.env.TEST_PASSTHROUGH_VAL = "secure-value-123";
+
+    manager = new UpstreamManager({
+      command: "node",
+      args: ["-e", script, "arg1", "arg2"],
+      passthrough_env: ["TEST_PASSTHROUGH_VAL"],
+      startup_timeout: 5,
+      request_timeout: 5,
+    });
+
+    await manager.start(5000);
+
+    const res = (await manager.send(
+      { jsonrpc: "2.0", id: 1, method: "get_spawn_details" },
+      5000,
+    )) as JsonRpcResponse;
+
+    const spawnDetails = res.result as { argv: string[]; env: Record<string, string> };
+
+    // Verify argv is exactly preserved
+    expect(spawnDetails.argv).toContain("arg1");
+    expect(spawnDetails.argv).toContain("arg2");
+    expect(spawnDetails.argv[spawnDetails.argv.length - 2]).toBe("arg1");
+    expect(spawnDetails.argv[spawnDetails.argv.length - 1]).toBe("arg2");
+
+    // Environment contains the passthrough variable
+    expect(spawnDetails.env.TEST_PASSTHROUGH_VAL).toBe("secure-value-123");
+
+    // Environment also contains baseline essential variables (e.g. PATH)
+    expect(spawnDetails.env.PATH).toBeDefined();
+
+    delete process.env.TEST_PASSTHROUGH_VAL;
+  });
 });

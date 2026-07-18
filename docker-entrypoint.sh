@@ -1,10 +1,14 @@
 #!/bin/sh
 set -e
 
-# If the command argument is 'mcp', start the MCP server
 if [ "$1" = "mcp" ]; then
-  exec node dist/mcp.js
+    shift
+    exec node dist/mcp.js "$@"
 fi
 
-# Default to starting the HTTP gateway server
-exec node dist/index.js "$@"
+if [ "$1" = "server" ] || [ -z "$1" ]; then
+    [ "$1" = "server" ] && shift
+    exec node dist/index.js "$@"
+fi
+
+exec "$@"

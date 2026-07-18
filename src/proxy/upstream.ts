@@ -38,12 +38,57 @@ export class UpstreamManager extends EventEmitter {
    * @param startupTimeoutMs  Maximum milliseconds to wait for initialize.
    */
   async start(startupTimeoutMs: number): Promise<void> {
-    // Build a filtered env — only explicitly allowlisted keys are forwarded.
+    // Build a filtered env starting with essential system variables.
     const env: Record<string, string> = {};
+    const essentialKeys = [
+      "PATH",
+      "PATHEXT",
+      "SystemRoot",
+      "windir",
+      "HOME",
+      "USERPROFILE",
+      "APPDATA",
+      "TMP",
+      "TEMP",
+      "TERM",
+      "LANG",
+      "LC_ALL",
+    ];
+
+    for (const key of essentialKeys) {
+      const val = process.env[key];
+      if (val !== undefined) {
+        env[key] = val;
+      }
+    }
+
     for (const key of this.cfg.passthrough_env ?? []) {
       const val = process.env[key];
-      if (val !== undefined) env[key] = val;
+      if (val !== undefined) {
+        env[key] = val;
+      }
     }
+
+    const debugEnv: Record<string, string> = {};
+    for (const [key, val] of Object.entries(env)) {
+      if (
+        key.includes("TOKEN") ||
+        key.includes("KEY") ||
+        key.includes("SECRET") ||
+        key.includes("PASSWORD")
+      ) {
+        debugEnv[key] = "[REDACTED]";
+      } else {
+        debugEnv[key] = val;
+      }
+    }
+
+    process.stderr.write(
+      `[limekey-proxy] Spawning upstream:\n` +
+      `COMMAND: ${JSON.stringify(this.cfg.command)}\n` +
+      `ARGS: ${JSON.stringify(this.cfg.args ?? [])}\n` +
+      `ENV: ${JSON.stringify(debugEnv)}\n`,
+    );
 
     this.proc = spawn(this.cfg.command, this.cfg.args ?? [], {
       env,
