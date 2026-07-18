@@ -16,8 +16,6 @@ export interface AuditEvent {
   matched_rule: string | null;
   step_up: { requested: boolean; approved?: boolean } | null;
   latency_ms: number;
-  task_id?: string;
-  request_count?: number;
 }
 
 export interface AuditSink {

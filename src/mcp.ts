@@ -46,90 +46,6 @@ auditSink.init?.().catch((err) => {
 });
 
 // ---------------------------------------------------------------------------
-// Task Scoped Session Store
-// ---------------------------------------------------------------------------
-
-interface TaskContext {
-  taskId: string;
-  subject: string;
-  agentId: string;
-  createdAt: Date;
-  expiresAt: Date;
-  requestCount: number;
-}
-
-class TaskStore {
-  private readonly tasks = new Map<string, TaskContext>();
-
-  create(agentId: string, subject: string, ttlSeconds: number): TaskContext {
-    const taskId = `task_${Math.random().toString(36).substring(2, 15)}`;
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + ttlSeconds * 1000);
-    const task: TaskContext = {
-      taskId,
-      agentId,
-      subject,
-      createdAt: now,
-      expiresAt,
-      requestCount: 0,
-    };
-    this.tasks.set(taskId, task);
-    return task;
-  }
-
-  lookup(taskId: string): TaskContext | undefined {
-    this.cleanupExpired();
-    return this.tasks.get(taskId);
-  }
-
-  delete(taskId: string): void {
-    this.tasks.delete(taskId);
-  }
-
-  cleanupExpired(): void {
-    const now = new Date();
-    for (const [taskId, task] of this.tasks.entries()) {
-      if (task.expiresAt <= now) {
-        this.tasks.delete(taskId);
-      }
-    }
-  }
-}
-
-const taskStore = new TaskStore();
-
-async function handleMcpAuth(id: number | string, params: unknown) {
-  const paramsObj = params as Record<string, unknown> | null | undefined;
-  if (!paramsObj || typeof paramsObj !== "object") {
-    sendError(id, -32602, "Invalid params: params must be an object");
-    return;
-  }
-
-  const rawToken = paramsObj.token;
-  if (typeof rawToken !== "string" || !rawToken) {
-    sendError(id, -32602, "Invalid params: token must be a non-empty string");
-    return;
-  }
-
-  const bearerToken = rawToken.replace(/^Bearer\s+/i, "");
-  try {
-    const validated = await tokenValidator.validate(bearerToken);
-    const ttl = config.identity.task_ttl_seconds ?? 60;
-    const task = taskStore.create(validated.agentId, validated.principal, ttl);
-    sendResponse(id, {
-      authenticated: true,
-      task_id: task.taskId,
-    });
-  } catch (err) {
-    if (err instanceof TokenValidationError) {
-      sendError(id, -32652, `Authentication failed: ${err.message}`);
-      return;
-    }
-    sendError(id, -32603, `Authentication error: ${(err as Error).message}`);
-  }
-}
-
-// ---------------------------------------------------------------------------
 // JSON-RPC Transport
 // ---------------------------------------------------------------------------
 
@@ -171,16 +87,6 @@ async function handleLine(line: string) {
   }
 
   const { id, method, params } = req;
-
-  // Handle mcp_auth globally in both modes
-  if (method === "mcp_auth") {
-    if (id === undefined || id === null) {
-      sendError(null, -32600, "Invalid Request: id is required for mcp_auth");
-      return;
-    }
-    await handleMcpAuth(id, params);
-    return;
-  }
 
   // Notifications (no id) — forward in proxy mode, handle known ones in standalone
   if (id === undefined || id === null) {
@@ -257,27 +163,28 @@ async function handleProxyRequest(
       ? (paramsObj.arguments as Record<string, unknown>)
       : {};
 
-  const taskId = toolArgs.task_id ?? paramsObj.task_id;
-  if (typeof taskId !== "string" || !taskId) {
-    sendToolResult(clientId, { error: "missing_task_id", message: "task_id is required." }, true);
+  // Token extraction — in MCP proxy mode the agent passes it as an argument
+  const rawToken = toolArgs.token ?? (paramsObj.token);
+  const bearerToken =
+    typeof rawToken === "string" ? rawToken.replace(/^Bearer\s+/i, "") : null;
+
+  if (!bearerToken) {
+    sendToolResult(clientId, { error: "missing_token", message: "Bearer token is required." }, true);
     return;
   }
 
-  const task = taskStore.lookup(taskId);
-  if (!task) {
-    sendToolResult(clientId, { error: "unauthorized", message: "Task session not found or expired." }, true);
+  // Token validation
+  let validated: { agentId: string; principal: string };
+  try {
+    validated = await tokenValidator.validate(bearerToken);
+  } catch (err) {
+    if (err instanceof TokenValidationError) {
+      sendToolResult(clientId, { error: err.code, message: err.message }, true);
+      return;
+    }
+    sendError(clientId, -32603, `Token validation error: ${(err as Error).message}`);
     return;
   }
-
-  task.requestCount++;
-  const maxRequests = config.identity.max_requests ?? 5;
-  if (task.requestCount > maxRequests) {
-    taskStore.delete(task.taskId);
-    sendToolResult(clientId, { error: "task_expired", message: "Task request execution limit exceeded." }, true);
-    return;
-  }
-
-  const validated = { agentId: task.agentId, principal: task.subject };
 
   // Build canonical AuthorizationRequest
   const authReq = buildAuthorizationRequest(
@@ -322,8 +229,6 @@ async function handleProxyRequest(
     matched_rule: policyResult.matchedRule,
     step_up: stepUpOutcome,
     latency_ms: Date.now() - start,
-    task_id: task.taskId,
-    request_count: task.requestCount,
   });
 
   if (finalDecision === "deny") {
@@ -351,8 +256,6 @@ async function handleProxyRequest(
       matched_rule: null,
       step_up: null,
       latency_ms: Date.now() - start,
-      task_id: task.taskId,
-      request_count: task.requestCount,
     });
     sendError(clientId, -32603, `Upstream failure: ${(err as Error).message}`);
   }
@@ -446,9 +349,13 @@ async function handleAuthorizeToolCall(id: number | string, args: unknown) {
   }
 
   const a = args as Record<string, unknown>;
-  const taskId = a.task_id;
   const rawToken = a.token;
   const toolName = a.tool_name;
+
+  if (typeof rawToken !== "string" || !rawToken) {
+    sendToolResult(id, { error: "missing_token", message: "Bearer token is required." }, true);
+    return;
+  }
 
   if (typeof toolName !== "string" || !toolName) {
     sendToolResult(
@@ -459,6 +366,7 @@ async function handleAuthorizeToolCall(id: number | string, args: unknown) {
     return;
   }
 
+  const bearerToken = rawToken.replace(/^Bearer\s+/i, "");
   const toolArgs =
     a.arguments && typeof a.arguments === "object"
       ? (a.arguments as Record<string, unknown>)
@@ -468,37 +376,14 @@ async function handleAuthorizeToolCall(id: number | string, args: unknown) {
   const start = Date.now();
 
   let validated: { agentId: string; principal: string };
-  let currentTask: TaskContext | undefined;
-
-  if (typeof taskId === "string" && taskId) {
-    const task = taskStore.lookup(taskId);
-    if (!task) {
-      sendToolResult(id, { error: "unauthorized", message: "Task session not found or expired." }, true);
+  try {
+    validated = await tokenValidator.validate(bearerToken);
+  } catch (err) {
+    if (err instanceof TokenValidationError) {
+      sendToolResult(id, { error: err.code, message: err.message }, true);
       return;
     }
-    task.requestCount++;
-    const maxRequests = config.identity.max_requests ?? 5;
-    if (task.requestCount > maxRequests) {
-      taskStore.delete(task.taskId);
-      sendToolResult(id, { error: "task_expired", message: "Task request execution limit exceeded." }, true);
-      return;
-    }
-    validated = { agentId: task.agentId, principal: task.subject };
-    currentTask = task;
-  } else if (typeof rawToken === "string" && rawToken) {
-    const bearerToken = rawToken.replace(/^Bearer\s+/i, "");
-    try {
-      validated = await tokenValidator.validate(bearerToken);
-    } catch (err) {
-      if (err instanceof TokenValidationError) {
-        sendToolResult(id, { error: err.code, message: err.message }, true);
-        return;
-      }
-      sendError(id, -32603, `Token validation error: ${(err as Error).message}`);
-      return;
-    }
-  } else {
-    sendToolResult(id, { error: "missing_token", message: "Bearer token or task_id is required." }, true);
+    sendError(id, -32603, `Token validation error: ${(err as Error).message}`);
     return;
   }
 
@@ -542,8 +427,6 @@ async function handleAuthorizeToolCall(id: number | string, args: unknown) {
     matched_rule: result.matchedRule,
     step_up: stepUpOutcome,
     latency_ms: Date.now() - start,
-    task_id: currentTask?.taskId,
-    request_count: currentTask?.requestCount,
   });
 
   if (finalDecision === "allow") {
@@ -611,9 +494,6 @@ async function startProxy() {
   if (!config.upstream) return; // standalone mode — no upstream to start
 
   const startupTimeoutMs = config.upstream.startup_timeout * 1000;
-  console.error("========== LIMEKEY UPSTREAM PASSED TO MANAGER ==========");
-  console.error(JSON.stringify(config.upstream));
-  console.error("========================================================");
   upstream = new UpstreamManager(config.upstream);
 
   upstream.on("crash", () => {
