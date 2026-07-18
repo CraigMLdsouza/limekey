@@ -3,6 +3,7 @@ import * as http from "node:http";
 import * as net from "node:net";
 import { UpstreamManager } from "./upstream.js";
 import type { UpstreamConfig } from "../config.js";
+import type { JsonRpcResponse } from "../types/jsonrpc.js";
 
 // ---------------------------------------------------------------------------
 // Helpers — mock upstream MCP echo server
@@ -123,10 +124,10 @@ describe("UpstreamManager", () => {
     manager = new UpstreamManager(makeEchoConfig());
     await manager.start(5000);
 
-    const res = await manager.send(
+    const res = (await manager.send(
       { jsonrpc: "2.0", id: 1, method: "tools/list" },
       5000,
-    );
+    )) as JsonRpcResponse;
     expect(res.result).toEqual({ echo: "tools/list" });
   });
 
@@ -134,11 +135,11 @@ describe("UpstreamManager", () => {
     manager = new UpstreamManager(makeEchoConfig());
     await manager.start(5000);
 
-    const [r1, r2, r3] = await Promise.all([
+    const [r1, r2, r3] = (await Promise.all([
       manager.send({ jsonrpc: "2.0", id: 1, method: "tools/list" }, 5000),
       manager.send({ jsonrpc: "2.0", id: 2, method: "tools/call" }, 5000),
       manager.send({ jsonrpc: "2.0", id: 3, method: "resources/list" }, 5000),
-    ]);
+    ])) as JsonRpcResponse[];
 
     expect((r1.result as Record<string, unknown>).echo).toBe("tools/list");
     expect((r2.result as Record<string, unknown>).echo).toBe("tools/call");

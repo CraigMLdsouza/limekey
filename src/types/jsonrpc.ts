@@ -8,7 +8,7 @@
 
 export interface JsonRpcRequest {
   jsonrpc: "2.0";
-  id: number | string | null;
+  id?: number | string | null;
   method: string;
   params?: unknown;
 }

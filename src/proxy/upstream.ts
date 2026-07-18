@@ -107,33 +107,30 @@ export class UpstreamManager extends EventEmitter {
   }
 
   /**
-   * Forward a JSON-RPC notification to the upstream. No response is expected.
+   * Forward a JSON-RPC request or notification to the upstream.
    *
-   * @param req The notification to forward.
+   * If the message has no ID, it is treated as a notification: forwarded
+   * directly to the upstream stdout/stdin without registering request IDs or
+   * expecting responses.
+   *
+   * If the message has an ID, the proxy substitutes a proxy-generated ID,
+   * routes the response using RequestIdMap, and awaits the response.
+   *
+   * @param req              The request or notification to forward.
+   * @param requestTimeoutMs Per-request timeout in milliseconds (for requests).
    */
-  sendNotification(req: JsonRpcRequest): void {
-    if (!this.proc?.stdin || this.crashed) return;
-    const outgoing = {
-      jsonrpc: req.jsonrpc,
-      method: req.method,
-      params: req.params,
-    };
-    this.proc.stdin.write(JSON.stringify(outgoing) + "\n");
-  }
-
-  /**
-   * Forward a JSON-RPC request to the upstream and await the response.
-   *
-   * The proxy substitutes a proxy-generated ID so client IDs are never
-   * exposed to the upstream. The returned response carries the proxy ID;
-   * callers are responsible for restoring the original client ID before
-   * writing back to the client.
-   *
-   * @param req              The request to forward.
-   * @param requestTimeoutMs Per-request timeout in milliseconds.
-   */
-  async send(req: JsonRpcRequest, requestTimeoutMs: number): Promise<JsonRpcResponse> {
-    return this.sendInternal(req, requestTimeoutMs);
+  async send(req: JsonRpcRequest, requestTimeoutMs: number): Promise<JsonRpcResponse | void> {
+    if (req.id === undefined || req.id === null) {
+      if (!this.proc?.stdin || this.crashed) return;
+      const outgoing = {
+        jsonrpc: req.jsonrpc,
+        method: req.method,
+        params: req.params,
+      };
+      this.proc.stdin.write(JSON.stringify(outgoing) + "\n");
+      return;
+    }
+    return this.sendInternal(req as JsonRpcRequest & { id: number | string }, requestTimeoutMs);
   }
 
   /**
@@ -187,7 +184,7 @@ export class UpstreamManager extends EventEmitter {
         reject(err);
       };
 
-      upstreamId = this.idMap.register(req.id, wrappedResolve, wrappedReject);
+      upstreamId = this.idMap.register(req.id ?? null, wrappedResolve, wrappedReject);
 
       const timer = setTimeout(() => {
         this.idMap.reject(
