@@ -38,7 +38,7 @@ const stepUp = new WebhookStepUpProvider(
 
 // Initialize audit sink immediately
 auditSink.init?.().catch((err) => {
-  console.error("Failed to initialize audit sink:", err);
+  process.stderr.write(`Failed to initialize audit sink: ${err}\n`);
 });
 
 // ---------------------------------------------------------------------------
@@ -141,9 +141,17 @@ async function handleLine(line: string) {
       });
       break;
 
+    case "ping":
+      sendResponse(id, {});
+      break;
+
     case "tools/call":
-      if (!params || typeof params !== "object" || params.name !== "authorize") {
-        sendError(id, -32601, `Method not found: ${params?.name || method}`);
+      if (!params || typeof params !== "object") {
+        sendError(id, -32602, "Invalid params: params must be an object");
+        break;
+      }
+      if (params.name !== "authorize") {
+        sendToolResult(id, { error: "unknown_tool", message: `Unknown tool: ${params.name}` }, true);
         break;
       }
       await handleAuthorizeToolCall(id, params.arguments);

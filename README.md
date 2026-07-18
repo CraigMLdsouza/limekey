@@ -154,6 +154,22 @@ Add the following configuration to your `claude_desktop_config.json` or Cursor s
 {
   "mcpServers": {
     "limekey": {
+      "command": "npx",
+      "args": ["limekey-mcp"],
+      "env": {
+        "LIMEKEY_CONFIG": "/absolute/path/to/limekey.config.yaml"
+      }
+    }
+  }
+}
+```
+
+Or, if running from a local clone without installing globally:
+
+```json
+{
+  "mcpServers": {
+    "limekey": {
       "command": "node",
       "args": ["/absolute/path/to/limekey/dist/mcp.js"],
       "env": {

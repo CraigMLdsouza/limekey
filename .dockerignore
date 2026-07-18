@@ -1,0 +1,24 @@
+# Dependencies & build output
+node_modules/
+dist/
+
+# Runtime data
+audit/
+*.jsonl
+*.log
+
+# Secrets & local config
+.env
+limekey.config.yaml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git internals
+.git/
+
+# Dev/test artifacts
+coverage/
+*.tgz
+benchmark.js
