@@ -43,6 +43,13 @@ export class YamlPolicyEngine implements PolicyEngine {
     if (m.principal_in && !m.principal_in.includes(call.principal)) {
       return false;
     }
+    if (m.arguments) {
+      for (const [key, val] of Object.entries(m.arguments)) {
+        if (call.arguments?.[key] !== val) {
+          return false;
+        }
+      }
+    }
     // An empty match object (`match: {}`) matches everything — used for
     // the default/catch-all rule.
     return true;

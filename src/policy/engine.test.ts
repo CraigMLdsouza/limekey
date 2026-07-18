@@ -315,4 +315,56 @@ describe("YamlPolicyEngine", () => {
     expect(result.decision).toBe("step_up");
     expect(result.matchedRule).toBe("require-mfa");
   });
+
+  /* ---- 14. arguments matching ---- */
+
+  it("matches a call when all matched arguments match", async () => {
+    const dir = freshDir();
+    const path = writePolicyFile(dir, [
+      {
+        name: "allow-sample-repo",
+        match: {
+          tool_name: "github.get_file",
+          arguments: { owner: "craigmldsouza", repo: "sample" },
+        },
+        effect: "allow",
+      },
+    ]);
+
+    const engine = new YamlPolicyEngine(path);
+    const result = await engine.evaluate(
+      makeCall({
+        toolName: "github.get_file",
+        arguments: { owner: "craigmldsouza", repo: "sample", path: "README.md" },
+      }),
+    );
+
+    expect(result.decision).toBe("allow");
+    expect(result.matchedRule).toBe("allow-sample-repo");
+  });
+
+  it("does NOT match when matched arguments differ", async () => {
+    const dir = freshDir();
+    const path = writePolicyFile(dir, [
+      {
+        name: "allow-sample-repo",
+        match: {
+          tool_name: "github.get_file",
+          arguments: { owner: "craigmldsouza", repo: "sample" },
+        },
+        effect: "allow",
+      },
+    ]);
+
+    const engine = new YamlPolicyEngine(path);
+    const result = await engine.evaluate(
+      makeCall({
+        toolName: "github.get_file",
+        arguments: { owner: "craigmldsouza", repo: "other-repo" },
+      }),
+    );
+
+    expect(result.decision).toBe("deny");
+    expect(result.matchedRule).toBe("default");
+  });
 });

@@ -23,6 +23,7 @@ export interface RuleMatch {
   agent_id_in?: string[];
   agent_id_not_in?: string[];
   principal_in?: string[];
+  arguments?: Record<string, unknown>;
 }
 
 export interface Rule {
