@@ -1,0 +1,236 @@
+import Fastify from "fastify";
+import { loadConfig, parseListenAddress } from "./config.js";
+import {
+  buildResourceMetadata,
+  resourceMetadataHandler,
+} from "./oauth/resourceMetadata.js";
+import { TokenValidationError } from "./oauth/tokenValidator.js";
+import { createGenericOidcValidator } from "./adapters/generic-oidc.js";
+import { createAuth0Validator } from "./adapters/auth0.js";
+import { createWorkosValidator } from "./adapters/workos.js";
+import { YamlPolicyEngine } from "./policy/engine.js";
+import type { ToolCall } from "./policy/types.js";
+import { FileAuditSink, hashArguments } from "./audit/logger.js";
+import { WebhookStepUpProvider } from "./stepup/webhook.js";
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+
+const CONFIG_PATH = process.env.LIMEKEY_CONFIG ?? "./limekey.config.yaml";
+const config = loadConfig(CONFIG_PATH);
+const { host, port } = parseListenAddress(config.server.listen);
+
+// ---------------------------------------------------------------------------
+// Identity — pick the right adapter based on config.identity.provider
+// ---------------------------------------------------------------------------
+
+function buildTokenValidator(cfg: typeof config) {
+  switch (cfg.identity.provider) {
+    case "auth0":
+      return createAuth0Validator(cfg);
+    case "workos":
+      return createWorkosValidator(cfg);
+    case "generic_oidc":
+    default:
+      return createGenericOidcValidator(cfg);
+  }
+}
+
+const tokenValidator = buildTokenValidator(config);
+
+// ---------------------------------------------------------------------------
+// Policy, audit, step-up
+// ---------------------------------------------------------------------------
+
+const policyEngine = new YamlPolicyEngine(config.policy.source);
+const auditSink = new FileAuditSink(config.audit.path);
+const stepUp = new WebhookStepUpProvider(
+  config.step_up.webhook_url,
+  config.step_up.timeout_seconds,
+  config.step_up.on_timeout,
+);
+
+// ---------------------------------------------------------------------------
+// App
+// ---------------------------------------------------------------------------
+
+const app = Fastify({ logger: true });
+
+// --- Global error handler ---------------------------------------------------
+
+app.setErrorHandler(async (error, _req, reply) => {
+  app.log.error(error);
+  const statusCode = (error as { statusCode?: number }).statusCode ?? 500;
+  return reply.code(statusCode).send({
+    error: statusCode >= 500 ? "internal_error" : "bad_request",
+    message:
+      statusCode >= 500
+        ? "An unexpected error occurred."
+        : error.message,
+  });
+});
+
+// --- CORS -------------------------------------------------------------------
+// Allow browser-based MCP clients and agent UIs to call discovery + authorize.
+
+app.addHook("onRequest", async (req, reply) => {
+  reply.header("Access-Control-Allow-Origin", "*");
+  reply.header(
+    "Access-Control-Allow-Methods",
+    "GET, POST, OPTIONS",
+  );
+  reply.header(
+    "Access-Control-Allow-Headers",
+    "Authorization, Content-Type",
+  );
+  if (req.method === "OPTIONS") {
+    return reply.code(204).send();
+  }
+});
+
+// --- Health check -----------------------------------------------------------
+
+app.get("/health", async () => {
+  return { status: "ok", version: "0.1.0" };
+});
+
+// --- RFC 9728 discovery endpoint --------------------------------------------
+// Lets MCP clients find the right authorization server before they ever
+// get a token.
+
+app.get("/.well-known/oauth-protected-resource", async () => {
+  return resourceMetadataHandler(
+    buildResourceMetadata({
+      resourceId: config.server.resource_id,
+      authorizationServerIssuer: config.identity.issuer,
+    }),
+  );
+});
+
+// --- Authorization decision endpoint ----------------------------------------
+// Every tool call an agent makes flows through this single decision point.
+
+app.post("/v0/authorize", async (req, reply) => {
+  const start = Date.now();
+
+  // --- Token extraction & validation ---
+  const authHeader = req.headers.authorization ?? "";
+  if (!authHeader.toLowerCase().startsWith("bearer ")) {
+    return reply.code(401).send({
+      error: "missing_token",
+      message: "Authorization header with Bearer token is required.",
+    });
+  }
+  const bearerToken = authHeader.replace(/^Bearer\s+/i, "");
+
+  let validated;
+  try {
+    validated = await tokenValidator.validate(bearerToken);
+  } catch (err) {
+    if (err instanceof TokenValidationError) {
+      return reply.code(401).send({ error: err.code, message: err.message });
+    }
+    throw err;
+  }
+
+  // --- Request body validation ---
+  const body = req.body as Record<string, unknown> | null | undefined;
+  if (!body || typeof body !== "object") {
+    return reply.code(400).send({
+      error: "invalid_body",
+      message: "Request body must be a JSON object.",
+    });
+  }
+
+  const toolName = body.tool_name;
+  if (typeof toolName !== "string" || toolName.length === 0) {
+    return reply.code(400).send({
+      error: "invalid_body",
+      message: "\"tool_name\" is required and must be a non-empty string.",
+    });
+  }
+
+  const args =
+    body.arguments != null && typeof body.arguments === "object"
+      ? (body.arguments as Record<string, unknown>)
+      : {};
+
+  const sessionId =
+    typeof body.session_id === "string" ? body.session_id : undefined;
+
+  // --- Policy evaluation ---
+  const call: ToolCall = {
+    agentId: validated.agentId,
+    principal: validated.principal,
+    resource: config.server.resource_id,
+    toolName,
+    arguments: args,
+    context: { ts: new Date().toISOString(), sessionId },
+  };
+
+  const result = await policyEngine.evaluate(call);
+  let finalDecision = result.decision;
+  let stepUpOutcome: { requested: boolean; approved?: boolean } | null = null;
+
+  if (result.decision === "step_up") {
+    stepUpOutcome = { requested: true };
+    const outcome = await stepUp.requestApproval({
+      agentId: call.agentId,
+      principal: call.principal,
+      toolName: call.toolName,
+      argumentsSummary: JSON.stringify(call.arguments).slice(0, 500),
+    });
+    stepUpOutcome.approved = outcome === "approved";
+    finalDecision = outcome === "approved" ? "allow" : "deny";
+  }
+
+  // --- Audit (always, regardless of outcome) ---
+  await auditSink.write({
+    ts: call.context.ts,
+    agent_id: call.agentId,
+    principal: call.principal,
+    resource: call.resource,
+    tool_name: call.toolName,
+    arguments_hash: hashArguments(call.arguments),
+    decision: finalDecision,
+    matched_rule: result.matchedRule,
+    step_up: stepUpOutcome,
+    latency_ms: Date.now() - start,
+  });
+
+  if (finalDecision === "allow") {
+    return reply.code(200).send({ decision: "allow" });
+  }
+  return reply.code(403).send({ decision: "deny", rule: result.matchedRule });
+});
+
+// ---------------------------------------------------------------------------
+// Startup
+// ---------------------------------------------------------------------------
+
+async function start() {
+  // Bootstrap audit sink (creates directories, etc.)
+  await auditSink.init();
+
+  await app.listen({ host, port });
+}
+
+start().catch((err) => {
+  app.log.error(err);
+  process.exit(1);
+});
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown
+// ---------------------------------------------------------------------------
+
+async function shutdown(signal: string) {
+  app.log.info(`received ${signal}, shutting down…`);
+  await app.close();
+  await auditSink.close();
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

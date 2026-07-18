@@ -1,0 +1,10 @@
+node_modules/
+dist/
+audit/*.jsonl
+*.log
+.env
+*.tgz
+coverage/
+.DS_Store
+Thumbs.db
+limekey.config.yaml

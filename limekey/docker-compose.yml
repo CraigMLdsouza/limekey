@@ -1,0 +1,19 @@
+version: "3.9"
+
+services:
+  limekey:
+    build: .
+    ports:
+      - "8443:8443"
+    environment:
+      - LIMEKEY_CONFIG=/app/limekey.config.yaml
+    volumes:
+      - ./limekey.config.yaml:/app/limekey.config.yaml:ro
+      - ./policies:/app/policies:ro
+      - ./audit:/app/audit
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8443/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s

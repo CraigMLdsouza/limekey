@@ -1,0 +1,25 @@
+server:
+  listen: 0.0.0.0:8443
+  resource_id: "https://tools.acme.internal"
+
+identity:
+  provider: generic_oidc
+  issuer: "https://auth.acme.com/"
+  jwks_uri: "https://auth.acme.com/.well-known/jwks.json"
+  agent_id_claim: "agent_id"
+  required_audience: "https://tools.acme.internal"
+
+policy:
+  engine: yaml
+  source: ./policies/example.yaml
+  default: deny
+
+step_up:
+  mode: webhook
+  webhook_url: "https://approvals.acme.internal/hook"
+  timeout_seconds: 120
+  on_timeout: deny
+
+audit:
+  sink: file
+  path: ./audit/log.jsonl

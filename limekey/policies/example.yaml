@@ -1,0 +1,20 @@
+rules:
+  - name: "allow read-only calendar reads"
+    match:
+      tool_name: "calendar.read"
+    effect: allow
+
+  - name: "require approval for sends"
+    match:
+      tool_name: "email.send"
+    effect: step_up
+
+  - name: "block finance writes from non-finance agents"
+    match:
+      tool_name: "ledger.write"
+      agent_id_not_in: ["finance-agent-01"]
+    effect: deny
+
+  - name: "default"
+    match: {}
+    effect: deny
