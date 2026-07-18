@@ -255,4 +255,189 @@ describe("Limekey MCP Server", () => {
     const content = JSON.parse(res.result.content[0].text);
     expect(content.error).toBe("missing_token");
   });
+
+  it("mcp_auth returns a task_id and tools/call succeeds using only task_id", async () => {
+    const authReq = {
+      jsonrpc: "2.0",
+      id: 6,
+      method: "mcp_auth",
+      params: { token: token },
+    };
+    proc.stdin.write(JSON.stringify(authReq) + "\n");
+    const authLine = await readLine(proc);
+    const authRes = JSON.parse(authLine);
+    expect(authRes.id).toBe(6);
+    expect(authRes.result.authenticated).toBe(true);
+    const taskId = authRes.result.task_id;
+    expect(taskId).toMatch(/^task_/);
+
+    const callReq = {
+      jsonrpc: "2.0",
+      id: 7,
+      method: "tools/call",
+      params: {
+        name: "authorize",
+        arguments: {
+          task_id: taskId,
+          tool_name: "calendar.read",
+          arguments: { date: "2026-07-18" },
+        },
+      },
+    };
+    proc.stdin.write(JSON.stringify(callReq) + "\n");
+    const callLine = await readLine(proc);
+    const callRes = JSON.parse(callLine);
+    expect(callRes.id).toBe(7);
+    expect(callRes.result.isError).toBe(false);
+    const content = JSON.parse(callRes.result.content[0].text);
+    expect(content.decision).toBe("allow");
+  });
+
+  it("rejects unknown task_ids", async () => {
+    const callReq = {
+      jsonrpc: "2.0",
+      id: 8,
+      method: "tools/call",
+      params: {
+        name: "authorize",
+        arguments: {
+          task_id: "task_unknown_12345",
+          tool_name: "calendar.read",
+        },
+      },
+    };
+    proc.stdin.write(JSON.stringify(callReq) + "\n");
+    const callLine = await readLine(proc);
+    const callRes = JSON.parse(callLine);
+    expect(callRes.id).toBe(8);
+    expect(callRes.result.isError).toBe(true);
+    const content = JSON.parse(callRes.result.content[0].text);
+    expect(content.error).toBe("unauthorized");
+  });
+
+  it("enforces max requests limit on task_id", async () => {
+    const authReq = {
+      jsonrpc: "2.0",
+      id: 9,
+      method: "mcp_auth",
+      params: { token: token },
+    };
+    proc.stdin.write(JSON.stringify(authReq) + "\n");
+    const authLine = await readLine(proc);
+    const authRes = JSON.parse(authLine);
+    const taskId = authRes.result.task_id;
+
+    for (let i = 0; i < 5; i++) {
+      const callReq = {
+        jsonrpc: "2.0",
+        id: 10 + i,
+        method: "tools/call",
+        params: {
+          name: "authorize",
+          arguments: {
+            task_id: taskId,
+            tool_name: "calendar.read",
+          },
+        },
+      };
+      proc.stdin.write(JSON.stringify(callReq) + "\n");
+      const callLine = await readLine(proc);
+      const callRes = JSON.parse(callLine);
+      expect(callRes.result.isError).toBe(false);
+    }
+
+    const callReq6 = {
+      jsonrpc: "2.0",
+      id: 15,
+      method: "tools/call",
+      params: {
+        name: "authorize",
+        arguments: {
+          task_id: taskId,
+          tool_name: "calendar.read",
+        },
+      },
+    };
+    proc.stdin.write(JSON.stringify(callReq6) + "\n");
+    const callLine6 = await readLine(proc);
+    const callRes6 = JSON.parse(callLine6);
+    expect(callRes6.result.isError).toBe(true);
+    const content = JSON.parse(callRes6.result.content[0].text);
+    expect(content.error).toBe("task_expired");
+  });
+
+  it("rejects expired task_ids", async () => {
+    const shortTtlConfig = CONFIG_PATH.replace(".yaml", "-short.yaml");
+    const configYaml = `
+server:
+  listen: 127.0.0.1:8444
+  resource_id: "https://mcp.test.internal"
+identity:
+  provider: generic_oidc
+  issuer: "http://127.0.0.1:${PORT_JWKS}"
+  jwks_uri: "http://127.0.0.1:${PORT_JWKS}/.well-known/jwks.json"
+  agent_id_claim: "agent_id"
+  required_audience: "https://mcp.test.internal"
+  task_ttl_seconds: 1
+policy:
+  engine: yaml
+  source: ${POLICY_PATH}
+  default: deny
+audit:
+  sink: file
+  path: ${AUDIT_PATH}-short
+`;
+    writeFileSync(shortTtlConfig, configYaml);
+
+    const shortProc = spawn("npx", ["tsx", "src/mcp.ts"], {
+      env: { ...process.env, LIMEKEY_CONFIG: shortTtlConfig },
+      shell: true,
+    });
+
+    try {
+      const initReq = {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "1" } }
+      };
+      shortProc.stdin.write(JSON.stringify(initReq) + "\n");
+      await readLine(shortProc);
+
+      const authReq = {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "mcp_auth",
+        params: { token: token },
+      };
+      shortProc.stdin.write(JSON.stringify(authReq) + "\n");
+      const authLine = await readLine(shortProc);
+      const authRes = JSON.parse(authLine);
+      const taskId = authRes.result.task_id;
+
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      const callReq = {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "authorize",
+          arguments: {
+            task_id: taskId,
+            tool_name: "calendar.read",
+          },
+        },
+      };
+      shortProc.stdin.write(JSON.stringify(callReq) + "\n");
+      const callLine = await readLine(shortProc);
+      const callRes = JSON.parse(callLine);
+      expect(callRes.result.isError).toBe(true);
+      const content = JSON.parse(callRes.result.content[0].text);
+      expect(content.error).toBe("unauthorized");
+    } finally {
+      shortProc.kill();
+      try { unlinkSync(shortTtlConfig); } catch {}
+    }
+  });
 });

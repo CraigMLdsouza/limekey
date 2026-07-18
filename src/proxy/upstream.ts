@@ -90,10 +90,31 @@ export class UpstreamManager extends EventEmitter {
       `ENV: ${JSON.stringify(debugEnv)}\n`,
     );
 
-    this.proc = spawn(this.cfg.command, this.cfg.args ?? [], {
+    const options = {
       env,
-      stdio: ["pipe", "pipe", "inherit"],
-    });
+      stdio: ["pipe", "pipe", "inherit"] as import("node:child_process").StdioOptions,
+    };
+
+    console.error("========== LIMEKEY CONFIG BEFORE SPAWN ==========");
+    console.error(JSON.stringify(this.cfg));
+    console.error("=================================================");
+
+    console.error("========== LIMEKEY UPSTREAM ==========");
+    console.error("command:", JSON.stringify(this.cfg.command));
+    console.error("args:", JSON.stringify(this.cfg.args));
+    console.error("cwd:", process.cwd());
+    console.error("shell:", (options as any).shell);
+    console.error("stdio:", JSON.stringify(options.stdio));
+    console.error("PATH:", env.PATH);
+    console.error("HOME:", env.HOME);
+    console.error("======================================");
+
+    this.proc = spawn(this.cfg.command, this.cfg.args ?? [], options);
+
+    const child = this.proc!;
+    console.error("spawnfile:", child.spawnfile);
+    console.error("spawnargs:", JSON.stringify(child.spawnargs));
+    console.error("pid:", child.pid);
 
     if (!this.proc.stdout || !this.proc.stdin) {
       throw new Error("Failed to attach stdio to upstream process");

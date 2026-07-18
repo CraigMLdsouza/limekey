@@ -9,6 +9,8 @@ export interface LimekeyConfig {
     jwks_uri: string;
     agent_id_claim: string;
     required_audience: string;
+    task_ttl_seconds?: number;
+    max_requests?: number;
   };
   policy: {
     engine: "yaml" | "rego";
@@ -76,7 +78,13 @@ export function parseListenAddress(listen: string): ListenAddress {
 export function loadConfig(path: string): LimekeyConfig {
   const raw = readFileSync(path, "utf-8");
   const config = yaml.load(raw) as LimekeyConfig;
+  console.error("========== LIMEKEY CONFIG RAW ==========");
+  console.error(JSON.stringify(config));
+  console.error("========================================");
   applyDefaults(config);
+  console.error("========== LIMEKEY CONFIG VALIDATED ==========");
+  console.error(JSON.stringify(config));
+  console.error("==============================================");
   validate(config);
   return config;
 }
@@ -89,6 +97,8 @@ function applyDefaults(config: LimekeyConfig): void {
   if (!config.identity) config.identity = {} as LimekeyConfig["identity"];
   config.identity.provider ??= "generic_oidc";
   config.identity.agent_id_claim ??= "agent_id";
+  config.identity.task_ttl_seconds ??= 60;
+  config.identity.max_requests ??= 5;
 
   if (!config.policy) config.policy = {} as LimekeyConfig["policy"];
   config.policy.engine ??= "yaml";
