@@ -32,11 +32,13 @@ function buildTokenValidator(cfg: typeof config) {
 const tokenValidator = buildTokenValidator(config);
 const policyEngine = new YamlPolicyEngine(config.policy.source);
 const auditSink = new FileAuditSink(config.audit.path);
-const stepUp = new WebhookStepUpProvider(
-  config.step_up.webhook_url,
-  config.step_up.timeout_seconds,
-  config.step_up.on_timeout,
-);
+const stepUp = config.step_up
+  ? new WebhookStepUpProvider(
+      config.step_up.webhook_url,
+      config.step_up.timeout_seconds,
+      config.step_up.on_timeout,
+    )
+  : null;
 
 // Initialize audit sink immediately
 auditSink.init?.().catch((err) => {
@@ -195,6 +197,26 @@ async function handleProxyRequest(
   // Policy evaluation
   const policyResult = await policyEngine.evaluate(authReq);
 
+  let finalDecision = policyResult.decision;
+  let stepUpOutcome: { requested: boolean; approved?: boolean } | null = null;
+
+  if (policyResult.decision === "step_up") {
+    if (!stepUp) {
+      finalDecision = "deny";
+      process.stderr.write(`[limekey-proxy] Step-up requested for tool "${authReq.tool}" but no step_up provider is configured. Falling back to deny.\n`);
+    } else {
+      stepUpOutcome = { requested: true };
+      const outcome = await stepUp.requestApproval({
+        agentId: authReq.principal.agentId,
+        principal: authReq.principal.sub,
+        toolName: authReq.tool,
+        argumentsSummary: JSON.stringify(authReq.arguments).slice(0, 500),
+      });
+      stepUpOutcome.approved = outcome === "approved";
+      finalDecision = outcome === "approved" ? "allow" : "deny";
+    }
+  }
+
   // Audit every decision
   await auditSink.write({
     request_id: authReq.requestId,
@@ -203,13 +225,13 @@ async function handleProxyRequest(
     principal: authReq.principal.sub,
     tool_name: authReq.tool,
     arguments_hash: hashArguments(authReq.arguments),
-    decision: policyResult.decision,
+    decision: finalDecision,
     matched_rule: policyResult.matchedRule,
-    step_up: null,
+    step_up: stepUpOutcome,
     latency_ms: Date.now() - start,
   });
 
-  if (policyResult.decision === "deny") {
+  if (finalDecision === "deny") {
     // Return MCP-native tool error — upstream never sees this request
     sendProxyDenial(clientId, authReq.requestId);
     return;
@@ -378,15 +400,20 @@ async function handleAuthorizeToolCall(id: number | string, args: unknown) {
   let stepUpOutcome: { requested: boolean; approved?: boolean } | null = null;
 
   if (result.decision === "step_up") {
-    stepUpOutcome = { requested: true };
-    const outcome = await stepUp.requestApproval({
-      agentId: authReq.principal.agentId,
-      principal: authReq.principal.sub,
-      toolName: authReq.tool,
-      argumentsSummary: JSON.stringify(authReq.arguments).slice(0, 500),
-    });
-    stepUpOutcome.approved = outcome === "approved";
-    finalDecision = outcome === "approved" ? "allow" : "deny";
+    if (!stepUp) {
+      finalDecision = "deny";
+      process.stderr.write(`[limekey-proxy] Step-up requested for tool "${authReq.tool}" but no step_up provider is configured. Falling back to deny.\n`);
+    } else {
+      stepUpOutcome = { requested: true };
+      const outcome = await stepUp.requestApproval({
+        agentId: authReq.principal.agentId,
+        principal: authReq.principal.sub,
+        toolName: authReq.tool,
+        argumentsSummary: JSON.stringify(authReq.arguments).slice(0, 500),
+      });
+      stepUpOutcome.approved = outcome === "approved";
+      finalDecision = outcome === "approved" ? "allow" : "deny";
+    }
   }
 
   await auditSink.write({

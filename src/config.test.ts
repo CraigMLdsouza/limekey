@@ -69,7 +69,7 @@ describe("loadConfig", () => {
       "https://api.example.com",
     );
     expect(config.policy.source).toBe("./policies");
-    expect(config.step_up.webhook_url).toBe(
+    expect(config.step_up!.webhook_url).toBe(
       "https://hook.example.com/approve",
     );
     expect(config.audit.path).toBe("/var/log/limekey/audit.log");
@@ -166,12 +166,22 @@ describe("loadConfig", () => {
     expect(config.policy.default).toBe("deny");
 
     // step_up defaults
-    expect(config.step_up.mode).toBe("webhook");
-    expect(config.step_up.timeout_seconds).toBe(120);
-    expect(config.step_up.on_timeout).toBe("deny");
+    expect(config.step_up!.mode).toBe("webhook");
+    expect(config.step_up!.timeout_seconds).toBe(120);
+    expect(config.step_up!.on_timeout).toBe("deny");
 
     // audit defaults
     expect(config.audit.sink).toBe("file");
+  });
+
+  it("loads successfully when step_up is completely omitted", () => {
+    tmpDir = makeTmpDir();
+    const obj = validConfigObj();
+    delete obj.step_up;
+    const filePath = writeYaml(tmpDir, obj);
+
+    const config = loadConfig(filePath);
+    expect(config.step_up).toBeUndefined();
   });
 
   // 4. step_up.webhook_url is required when mode is "webhook"

@@ -45,11 +45,13 @@ const tokenValidator = buildTokenValidator(config);
 
 const policyEngine = new YamlPolicyEngine(config.policy.source);
 const auditSink = new FileAuditSink(config.audit.path);
-const stepUp = new WebhookStepUpProvider(
-  config.step_up.webhook_url,
-  config.step_up.timeout_seconds,
-  config.step_up.on_timeout,
-);
+const stepUp = config.step_up
+  ? new WebhookStepUpProvider(
+      config.step_up.webhook_url,
+      config.step_up.timeout_seconds,
+      config.step_up.on_timeout,
+    )
+  : null;
 
 // ---------------------------------------------------------------------------
 // App
@@ -173,15 +175,20 @@ app.post("/v0/authorize", async (req, reply) => {
   let stepUpOutcome: { requested: boolean; approved?: boolean } | null = null;
 
   if (result.decision === "step_up") {
-    stepUpOutcome = { requested: true };
-    const outcome = await stepUp.requestApproval({
-      agentId: authReq.principal.agentId,
-      principal: authReq.principal.sub,
-      toolName: authReq.tool,
-      argumentsSummary: JSON.stringify(authReq.arguments).slice(0, 500),
-    });
-    stepUpOutcome.approved = outcome === "approved";
-    finalDecision = outcome === "approved" ? "allow" : "deny";
+    if (!stepUp) {
+      finalDecision = "deny";
+      app.log.warn(`Step-up requested for tool "${authReq.tool}" but no step_up provider is configured. Falling back to deny.`);
+    } else {
+      stepUpOutcome = { requested: true };
+      const outcome = await stepUp.requestApproval({
+        agentId: authReq.principal.agentId,
+        principal: authReq.principal.sub,
+        toolName: authReq.tool,
+        argumentsSummary: JSON.stringify(authReq.arguments).slice(0, 500),
+      });
+      stepUpOutcome.approved = outcome === "approved";
+      finalDecision = outcome === "approved" ? "allow" : "deny";
+    }
   }
 
   // --- Audit (always, regardless of outcome) ---

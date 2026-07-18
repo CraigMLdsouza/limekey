@@ -15,7 +15,7 @@ export interface LimekeyConfig {
     source: string;
     default: "allow" | "deny";
   };
-  step_up: {
+  step_up?: {
     mode: "webhook" | "ciba";
     webhook_url: string;
     timeout_seconds: number;
@@ -94,10 +94,11 @@ function applyDefaults(config: LimekeyConfig): void {
   config.policy.engine ??= "yaml";
   config.policy.default ??= "deny";
 
-  if (!config.step_up) config.step_up = {} as LimekeyConfig["step_up"];
-  config.step_up.mode ??= "webhook";
-  config.step_up.timeout_seconds ??= 120;
-  config.step_up.on_timeout ??= "deny";
+  if (config.step_up) {
+    config.step_up.mode ??= "webhook";
+    config.step_up.timeout_seconds ??= 120;
+    config.step_up.on_timeout ??= "deny";
+  }
 
   if (!config.audit) config.audit = {} as LimekeyConfig["audit"];
   config.audit.sink ??= "file";
@@ -122,8 +123,10 @@ function validate(config: LimekeyConfig): void {
   ];
 
   // Conditional requirements
-  if (config?.step_up?.mode === "webhook") {
-    required.push([config?.step_up?.webhook_url, "step_up.webhook_url"]);
+  if (config.step_up) {
+    if (config.step_up.mode === "webhook") {
+      required.push([config.step_up.webhook_url, "step_up.webhook_url"]);
+    }
   }
   if (config?.audit?.sink === "file") {
     required.push([config?.audit?.path, "audit.path"]);
@@ -151,12 +154,14 @@ function validate(config: LimekeyConfig): void {
   }
 
   // Validate timeout
-  if (
-    typeof config.step_up.timeout_seconds !== "number" ||
-    config.step_up.timeout_seconds <= 0
-  ) {
-    throw new Error(
-      `step_up.timeout_seconds must be a positive number, got: ${config.step_up.timeout_seconds}`,
-    );
+  if (config.step_up) {
+    if (
+      typeof config.step_up.timeout_seconds !== "number" ||
+      config.step_up.timeout_seconds <= 0
+    ) {
+      throw new Error(
+        `step_up.timeout_seconds must be a positive number, got: ${config.step_up.timeout_seconds}`,
+      );
+    }
   }
 }

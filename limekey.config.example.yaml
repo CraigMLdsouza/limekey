@@ -14,11 +14,11 @@ policy:
   source: ./policies/example.yaml
   default: deny
 
-step_up:
-  mode: webhook
-  webhook_url: "https://approvals.acme.internal/hook"
-  timeout_seconds: 120
-  on_timeout: deny
+# step_up: (Optional: Enable if you require interactive step-up approval workflows)
+#   mode: webhook
+#   webhook_url: "https://approvals.acme.internal/hook"
+#   timeout_seconds: 120
+#   on_timeout: deny
 
 audit:
   sink: file
