@@ -138,17 +138,72 @@ The compose setup exposes port `8443` and configures a healthcheck checking `/he
 
 ## Model Context Protocol (MCP) Server
 
-Limekey can run as a standard `stdio`-based MCP server. This allows you to mount it directly inside Cursor, Claude Desktop, or custom agent frameworks to evaluate policy checks as standard tool calls.
+Limekey can run as a **transparent MCP policy enforcement proxy** or a **standalone MCP server** depending on your configuration.
 
-To run the MCP server:
-```bash
-npm run build
-npm run mcp
+### 1. Transparent Proxy Mode (Recommended)
+In this mode, Limekey sits between the client (e.g. Claude Desktop, Cursor) and an upstream MCP server (e.g., the GitHub MCP server). It intercepts every `tools/call`, evaluates your YAML policies, audits the decision, and forwards the call to the upstream server only if authorized. Denied actions return a native MCP tool error directly without ever hitting the upstream. All other MCP protocol methods (such as `tools/list`) are piped through transparently.
+
+```
+Claude Desktop / Cursor  ──►  Limekey Proxy  ──►  GitHub MCP Server
 ```
 
-### Integration with Claude Desktop / Cursor
+#### Configuration (`limekey.config.yaml`)
+To enable proxy mode, define the `upstream` block in your configuration:
 
-Add the following configuration to your `claude_desktop_config.json` or Cursor settings:
+```yaml
+server:
+  listen: 127.0.0.1:8443
+  resource_id: "https://github.mcp.internal"
+
+identity:
+  provider: generic_oidc
+  issuer: "https://auth.acme.com/"
+  jwks_uri: "https://auth.acme.com/.well-known/jwks.json"
+  agent_id_claim: "agent_id"
+  required_audience: "https://github.mcp.internal"
+
+policy:
+  engine: yaml
+  source: ./policies/example.yaml
+  default: deny
+
+upstream:
+  command: npx
+  args:
+    - "-y"
+    - "@modelcontextprotocol/server-github"
+  passthrough_env:
+    - GITHUB_PERSONAL_ACCESS_TOKEN
+  startup_timeout: 10
+  request_timeout: 30
+
+audit:
+  sink: file
+  path: ./audit/log.jsonl
+```
+
+#### Integration with Claude Desktop
+Add Limekey to your `claude_desktop_config.json` as the endpoint server. Since Limekey is a proxy, the client only connects to Limekey, and the upstream server is spawned internally:
+
+```json
+{
+  "mcpServers": {
+    "github-secured": {
+      "command": "node",
+      "args": ["/absolute/path/to/limekey/dist/mcp.js"],
+      "env": {
+        "LIMEKEY_CONFIG": "/absolute/path/to/limekey/limekey.config.yaml",
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_your_token_here"
+      }
+    }
+  }
+}
+```
+
+---
+
+### 2. Standalone Mode (Compatibility)
+If the `upstream` configuration block is omitted, Limekey runs in standalone mode. It registers a single tool called `authorize` which can be queried manually by advisory agents to decide if a given operation is permitted.
 
 ```json
 {

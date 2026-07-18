@@ -170,3 +170,28 @@ Agent: "I apologize, but I am blocked by your team's security policy from deleti
 ```
 
 This prevents the agent from hanging, looping, or attempting to bypass restrictions.
+
+---
+
+## Alternative: Transparent MCP Policy Enforcement Proxy
+
+If your agent communicates with tools via the **Model Context Protocol (MCP)**, you do not need to modify any application code or call authorization APIs manually. 
+
+Instead, configure the Limekey MCP server to act as a **transparent policy enforcement proxy** by specifying the `upstream` server in your `limekey.config.yaml`.
+
+```
+[ Cursor / Claude Desktop ]
+            │
+            ▼ (tools/call)
+   [ Limekey Proxy ]  ── (Denied: Native MCP tool error returned)
+            │
+            ▼ (Allowed: Forwarded)
+  [ Upstream MCP Server ]
+```
+
+When Limekey blocks a tool call, it returns a standard MCP tool execution error containing:
+- A fixed error message: `"Operation denied by LimeKey policy."`
+- The `request_id` for tracking.
+
+The client application (such as Cursor or Claude Desktop) natively renders this as a tool execution failure, preventing the agent from executing the command or bypassing the gateway.
+
