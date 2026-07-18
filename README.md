@@ -125,14 +125,61 @@ npm start
 
 ## Docker Deployment
 
-Limekey is distributed as a lightweight Docker container, optimized for minimal resource footprints (built on `node:20-alpine`).
+Limekey is distributed as a lightweight, production-ready Docker container (built on `node:20-alpine`). 
 
-Run with Docker Compose:
+### 1. Build the Image
 ```bash
-docker-compose up --build -d
+docker build -t limekey .
 ```
 
-The compose setup exposes port `8443` and configures a healthcheck checking `/health`.
+### 2. Configure Your Mounting Directory
+To run Limekey in Docker, place your configuration file and policies inside a single directory on your host machine (e.g. `./config`):
+```
+config/
+├── config.yaml
+└── policies/
+    └── example.yaml
+```
+
+*Note: In your `config.yaml`, ensure the `policy.source` points to `/etc/limekey/policies/example.yaml`.*
+
+### 3. Run the HTTP Gateway (API Mode)
+To run the standard HTTP gateway (exposes port `8443` with built-in healthchecks):
+```bash
+docker run -d \
+  -p 8443:8443 \
+  -v ./config:/etc/limekey:ro \
+  limekey
+```
+
+### 4. Run the MCP Server (Proxy Mode)
+To run Limekey as a transparent MCP proxy directly inside Cursor or Claude Desktop, pass `mcp` as the container command:
+
+```json
+{
+  "mcpServers": {
+    "limekey": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-v",
+        "./config:/etc/limekey:ro",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "limekey",
+        "mcp"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "YOUR_GITHUB_PERSONAL_ACCESS_TOKEN"
+      }
+    }
+  }
+}
+```
+
+The container automatically maps the configurations, handles OIDC/JWT validation, and intercepts tools execution inside the client.
 
 ---
 
