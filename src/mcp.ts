@@ -91,8 +91,7 @@ async function handleLine(line: string) {
     if (method === "notifications/initialized") return; // handshake complete
     // In proxy mode, forward other notifications
     if (upstream) {
-      upstream.send({ jsonrpc: "2.0", id: null, method, params }, requestTimeoutMs)
-        .catch(() => {}); // notifications don't need a response
+      upstream.sendNotification({ jsonrpc: "2.0", id: null, method, params });
     }
     return;
   }

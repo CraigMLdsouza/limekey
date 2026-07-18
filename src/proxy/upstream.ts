@@ -107,6 +107,21 @@ export class UpstreamManager extends EventEmitter {
   }
 
   /**
+   * Forward a JSON-RPC notification to the upstream. No response is expected.
+   *
+   * @param req The notification to forward.
+   */
+  sendNotification(req: JsonRpcRequest): void {
+    if (!this.proc?.stdin || this.crashed) return;
+    const outgoing = {
+      jsonrpc: req.jsonrpc,
+      method: req.method,
+      params: req.params,
+    };
+    this.proc.stdin.write(JSON.stringify(outgoing) + "\n");
+  }
+
+  /**
    * Forward a JSON-RPC request to the upstream and await the response.
    *
    * The proxy substitutes a proxy-generated ID so client IDs are never
