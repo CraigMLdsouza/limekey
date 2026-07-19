@@ -92,13 +92,13 @@ async function run() {
 
   // 5. Spawn Limekey Gateway process
   console.log("Spawning Limekey server...");
-  const limekeyProc = spawn("npx", ["tsx", "src/index.ts"], {
+  const limekeyProc = spawn("node", ["dist/index.js"], {
     cwd: LIMEKEY_DIR,
     env: {
       ...process.env,
       LIMEKEY_CONFIG: CONFIG_PATH,
     },
-    shell: true,
+    shell: false,
   });
 
   // Handle stream logs to print errors
@@ -195,10 +195,13 @@ async function run() {
 
   // 7. Cleanup
   console.log("\nTearing down servers...");
+  if (typeof jwksServer.closeAllConnections === "function") {
+    jwksServer.closeAllConnections();
+  }
   jwksServer.close();
   
   // Kill Limekey process cleanly
-  limekeyProc.kill("SIGTERM");
+  limekeyProc.kill("SIGKILL");
   await new Promise((r) => setTimeout(r, 1000));
   
   cleanupFiles();
