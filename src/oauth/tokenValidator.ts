@@ -39,7 +39,7 @@ export class TokenValidator {
     this.jwks = createRemoteJWKSet(new URL(config.jwksUri));
   }
 
-  async validate(bearerToken: string): Promise<ValidatedToken> {
+  async validate(bearerToken: string, sessionId?: string): Promise<ValidatedToken> {
     let payload;
     try {
       const result = await jwtVerify(bearerToken, this.jwks, {
@@ -74,6 +74,17 @@ export class TokenValidator {
         `token missing required agent identity claim "${this.config.agentIdClaim}"`,
         "missing_agent_id",
       );
+    }
+
+    // Bind session context to token claims to prevent replay (T0-5)
+    const tokenSessionId = payload.session_id;
+    if (tokenSessionId !== undefined && typeof tokenSessionId === "string") {
+      if (sessionId === undefined || tokenSessionId !== sessionId) {
+        throw new TokenValidationError(
+          `token is bound to session "${tokenSessionId}" but request session is "${sessionId ?? 'undefined'}"`,
+          "invalid_signature",
+        );
+      }
     }
 
     return {

@@ -170,6 +170,8 @@ describe("FileAuditSink", () => {
         "matched_rule",
         "step_up",
         "latency_ms",
+        "prev_hash",
+        "hash",
       ];
 
       for (const key of expectedKeys) {
@@ -188,6 +190,44 @@ describe("FileAuditSink", () => {
       const filePath = join(tmpDir, "audit.jsonl");
       const sink = new FileAuditSink(filePath);
       await expect(sink.close()).resolves.toBeUndefined();
+    });
+  });
+
+  /* ---- verifyAuditChain() ---------------------------------------- */
+
+  describe("verifyAuditChain()", () => {
+    it("validates an intact chain successfully", async () => {
+      const filePath = join(tmpDir, "audit.jsonl");
+      const sink = new FileAuditSink(filePath);
+      await sink.init();
+
+      const { verifyAuditChain } = await import("./logger.js");
+
+      await sink.write(sampleEvent({ agent_id: "agent-1" }));
+      await sink.write(sampleEvent({ agent_id: "agent-2" }));
+
+      expect(verifyAuditChain(filePath)).toBe(true);
+    });
+
+    it("detects tampering when an entry is modified on disk", async () => {
+      const filePath = join(tmpDir, "audit.jsonl");
+      const sink = new FileAuditSink(filePath);
+      await sink.init();
+
+      const { verifyAuditChain } = await import("./logger.js");
+
+      await sink.write(sampleEvent({ agent_id: "agent-1" }));
+      await sink.write(sampleEvent({ agent_id: "agent-2" }));
+
+      // Tamper with the file
+      const { readFileSync, writeFileSync } = await import("node:fs");
+      const lines = readFileSync(filePath, "utf-8").trim().split("\n");
+      const obj = JSON.parse(lines[0]);
+      obj.agent_id = "agent-malicious-tampered";
+      lines[0] = JSON.stringify(obj);
+      writeFileSync(filePath, lines.join("\n") + "\n");
+
+      expect(verifyAuditChain(filePath)).toBe(false);
     });
   });
 });

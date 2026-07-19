@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import rateLimit from "@fastify/rate-limit";
 import { loadConfig, parseListenAddress } from "./config.js";
 import {
   buildResourceMetadata,
@@ -50,6 +51,7 @@ const stepUp = config.step_up
       config.step_up.webhook_url,
       config.step_up.timeout_seconds,
       config.step_up.on_timeout,
+      config.step_up.webhook_secret,
     )
   : null;
 
@@ -57,11 +59,29 @@ const stepUp = config.step_up
 // App
 // ---------------------------------------------------------------------------
 
-const app = Fastify({ logger: true });
+const app = Fastify({
+  logger: {
+    redact: {
+      paths: [
+        "req.headers.authorization",
+        "headers.authorization",
+        "body.token",
+        "body.arguments.token",
+      ],
+      censor: "[REDACTED]",
+    }
+  },
+  bodyLimit: 1048576, // 1MB payload size limit to prevent OOM (T0-4)
+});
+
+await app.register(rateLimit, {
+  max: 100, // Limit each IP to 100 requests per minute to prevent API flooding (T0-4)
+  timeWindow: "1 minute",
+});
 
 // --- Global error handler ---------------------------------------------------
 
-app.setErrorHandler(async (error, _req, reply) => {
+app.setErrorHandler(async (error: any, _req, reply) => {
   app.log.error(error);
   const statusCode = (error as { statusCode?: number }).statusCode ?? 500;
   return reply.code(statusCode).send({
@@ -116,27 +136,7 @@ app.get("/.well-known/oauth-protected-resource", async () => {
 app.post("/v0/authorize", async (req, reply) => {
   const start = Date.now();
 
-  // --- Token extraction & validation ---
-  const authHeader = req.headers.authorization ?? "";
-  if (!authHeader.toLowerCase().startsWith("bearer ")) {
-    return reply.code(401).send({
-      error: "missing_token",
-      message: "Authorization header with Bearer token is required.",
-    });
-  }
-  const bearerToken = authHeader.replace(/^Bearer\s+/i, "");
-
-  let validated;
-  try {
-    validated = await tokenValidator.validate(bearerToken);
-  } catch (err) {
-    if (err instanceof TokenValidationError) {
-      return reply.code(401).send({ error: err.code, message: err.message });
-    }
-    throw err;
-  }
-
-  // --- Request body validation ---
+  // --- Request body validation & extraction ---
   const body = req.body as Record<string, unknown> | null | undefined;
   if (!body || typeof body !== "object") {
     return reply.code(400).send({
@@ -160,6 +160,26 @@ app.post("/v0/authorize", async (req, reply) => {
 
   const sessionId =
     typeof body.session_id === "string" ? body.session_id : undefined;
+
+  // --- Token extraction & validation ---
+  const authHeader = req.headers.authorization ?? "";
+  if (!authHeader.toLowerCase().startsWith("bearer ")) {
+    return reply.code(401).send({
+      error: "missing_token",
+      message: "Authorization header with Bearer token is required.",
+    });
+  }
+  const bearerToken = authHeader.replace(/^Bearer\s+/i, "");
+
+  let validated;
+  try {
+    validated = await tokenValidator.validate(bearerToken, sessionId);
+  } catch (err) {
+    if (err instanceof TokenValidationError) {
+      return reply.code(401).send({ error: err.code, message: err.message });
+    }
+    throw err;
+  }
 
   // --- Policy evaluation ---
   const authReq = buildAuthorizationRequest(
@@ -208,7 +228,11 @@ app.post("/v0/authorize", async (req, reply) => {
   if (finalDecision === "allow") {
     return reply.code(200).send({ decision: "allow" });
   }
-  return reply.code(403).send({ decision: "deny" });
+  return reply.code(403).send({
+    decision: "deny",
+    matched_rule: result.matchedRule,
+    reason: `Operation denied by policy rule: "${result.matchedRule}"`,
+  });
 });
 
 // ---------------------------------------------------------------------------

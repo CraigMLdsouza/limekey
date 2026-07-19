@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import yaml from "js-yaml";
+import vm from "node:vm";
 import type { PolicyEngine, PolicyResult, Rule, RuleMatch } from "./types.js";
 import type { AuthorizationRequest } from "../types/authorization.js";
 
@@ -13,6 +14,7 @@ interface RuleFile {
  */
 export class YamlPolicyEngine implements PolicyEngine {
   private rules: Rule[];
+  private vmContext = vm.createContext({});
 
   constructor(policyFilePath: string) {
     const raw = readFileSync(policyFilePath, "utf-8");
@@ -32,7 +34,7 @@ export class YamlPolicyEngine implements PolicyEngine {
   private matches(rule: Rule, req: AuthorizationRequest): boolean {
     const m: RuleMatch = rule.match;
 
-    if (m.tool_name !== undefined && m.tool_name !== req.tool) {
+    if (m.tool_name !== undefined && !this.toolMatches(m.tool_name, req.tool)) {
       return false;
     }
     if (m.agent_id_in && !m.agent_id_in.includes(req.principal.agentId)) {
@@ -54,5 +56,36 @@ export class YamlPolicyEngine implements PolicyEngine {
     // An empty match object (`match: {}`) matches everything — used for
     // the default/catch-all rule.
     return true;
+  }
+
+  private toolMatches(pattern: string, tool: string): boolean {
+    if (pattern === tool) {
+      return true;
+    }
+    // Regex matching: e.g. "/^ledger\..*/"
+    if (pattern.startsWith("/") && pattern.endsWith("/")) {
+      try {
+        const regexStr = pattern.slice(1, -1);
+        // Use Node's built-in vm module with a shared context and 50ms timeout to prevent ReDoS (T1-1)
+        const script = new vm.Script(`new RegExp(${JSON.stringify(regexStr)}).test(${JSON.stringify(tool)})`);
+        return script.runInContext(this.vmContext, { timeout: 50 });
+      } catch {
+        return false;
+      }
+    }
+    // Wildcard matching: e.g. "calendar.*"
+    if (pattern.includes("*")) {
+      try {
+        const regexStr = "^" + pattern
+          .replace(/[-\/\\^$+?.()|[\]{}]/g, '\\$&') // escape special characters
+          .replace(/\*/g, ".*") + "$";
+        // Also use vm with a shared context and 50ms timeout for wildcards to guarantee complete ReDoS safety
+        const script = new vm.Script(`new RegExp(${JSON.stringify(regexStr)}).test(${JSON.stringify(tool)})`);
+        return script.runInContext(this.vmContext, { timeout: 50 });
+      } catch {
+        return false;
+      }
+    }
+    return false;
   }
 }

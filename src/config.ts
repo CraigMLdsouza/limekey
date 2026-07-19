@@ -20,6 +20,7 @@ export interface LimekeyConfig {
     webhook_url: string;
     timeout_seconds: number;
     on_timeout: "allow" | "deny";
+    webhook_secret?: string;
   };
   audit: {
     sink: "file" | "http";

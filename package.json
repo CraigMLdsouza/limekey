@@ -17,11 +17,15 @@
     "mcp:start": "node dist/mcp.js"
   },
   "dependencies": {
-    "fastify": "^4.28.0",
+    "@fastify/rate-limit": "^11.1.0",
+    "fastify": "^5.2.1",
     "jose": "^5.6.3",
     "js-yaml": "^4.1.0",
     "pino": "^9.2.0",
     "undici": "^6.19.2"
+  },
+  "overrides": {
+    "fast-uri": "^3.1.2"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

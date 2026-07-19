@@ -31,7 +31,7 @@ function buildTestApp(): FastifyInstance {
   });
 
   // Error handler
-  app.setErrorHandler(async (error, _req, reply) => {
+  app.setErrorHandler(async (error: any, _req, reply) => {
     const statusCode = (error as { statusCode?: number }).statusCode ?? 500;
     return reply.code(statusCode).send({
       error: statusCode >= 500 ? "internal_error" : "bad_request",
