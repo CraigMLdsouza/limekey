@@ -40,30 +40,27 @@ const stepUp = config.step_up
     )
   : null;
 
-// Initialize audit sink immediately
-auditSink.init?.().catch((err) => {
-  process.stderr.write(`Failed to initialize audit sink: ${err}\n`);
-});
-
 // ---------------------------------------------------------------------------
-// JSON-RPC Transport
+// JSON-RPC Transport & Buffer
 // ---------------------------------------------------------------------------
 
 let buffer = "";
 
-process.stdin.on("data", (chunk) => {
-  buffer += chunk.toString("utf-8");
-  let newlineIndex;
-  while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
-    const line = buffer.slice(0, newlineIndex).trim();
-    buffer = buffer.slice(newlineIndex + 1);
-    if (line) {
-      handleLine(line).catch((err) => {
-        sendError(null, -32603, `Internal handler error: ${(err as Error).message}`);
-      });
+function listenToStdin() {
+  process.stdin.on("data", (chunk) => {
+    buffer += chunk.toString("utf-8");
+    let newlineIndex;
+    while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      if (line) {
+        handleLine(line).catch((err) => {
+          sendError(null, -32603, `Internal handler error: ${(err as Error).message}`);
+        });
+      }
     }
-  }
-});
+  });
+}
 
 interface ParsedRequest {
   jsonrpc: "2.0";
@@ -126,6 +123,18 @@ async function handleProxyRequest(
   params: unknown,
   _rawLine: string,
 ) {
+  if (method === "initialize") {
+    // Return cached initialize result to be fully spec-compliant and avoid
+    // sending a second initialize to the upstream.
+    const result = upstream ? upstream.getInitializeResult() : null;
+    writeStdout({
+      jsonrpc: "2.0",
+      id: clientId,
+      result,
+    });
+    return;
+  }
+
   if (method !== "tools/call") {
     // Forward all non-intercepted methods transparently
     try {
@@ -487,26 +496,33 @@ function writeStdout(msg: JsonRpcRequest | JsonRpcResponse | Record<string, unkn
 }
 
 // ---------------------------------------------------------------------------
-// Startup
+// Startup & Initialization
 // ---------------------------------------------------------------------------
 
-async function startProxy() {
-  if (!config.upstream) return; // standalone mode — no upstream to start
+async function start() {
+  // 1. Initialize audit sink
+  await auditSink.init?.();
 
-  const startupTimeoutMs = config.upstream.startup_timeout * 1000;
-  upstream = new UpstreamManager(config.upstream);
+  // 2. Start proxy/upstream if configured
+  if (config.upstream) {
+    const startupTimeoutMs = config.upstream.startup_timeout * 1000;
+    upstream = new UpstreamManager(config.upstream);
 
-  upstream.on("crash", () => {
-    process.stderr.write("[limekey-proxy] upstream crashed — shutting down\n");
-    shutdown();
-  });
+    upstream.on("crash", () => {
+      process.stderr.write("[limekey-proxy] upstream crashed — shutting down\n");
+      shutdown();
+    });
 
-  await upstream.start(startupTimeoutMs);
-  process.stderr.write("[limekey-proxy] upstream ready, accepting client connections\n");
+    await upstream.start(startupTimeoutMs);
+    process.stderr.write("[limekey-proxy] upstream ready, accepting client connections\n");
+  }
+
+  // 3. Start listening to stdin
+  listenToStdin();
 }
 
-startProxy().catch((err) => {
-  process.stderr.write(`[limekey-proxy] failed to start upstream: ${err}\n`);
+start().catch((err) => {
+  process.stderr.write(`[limekey] failed to start: ${err}\n`);
   process.exit(1);
 });
 

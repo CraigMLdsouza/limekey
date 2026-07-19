@@ -3,7 +3,7 @@ import { writeFileSync, unlinkSync, mkdirSync, rmSync } from "node:fs";
 import * as http from "node:http";
 import * as jose from "jose";
 
-const LIMEKEY_DIR = "c:/Users/Craig Michael Dsouza/Downloads/limekey-dev";
+const LIMEKEY_DIR = process.cwd();
 const CONFIG_PATH = `${LIMEKEY_DIR}/limekey.config.benchmark.yaml`;
 const POLICY_PATH = `${LIMEKEY_DIR}/policies/benchmark.yaml`;
 const AUDIT_DIR = `${LIMEKEY_DIR}/audit`;
