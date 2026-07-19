@@ -367,4 +367,56 @@ describe("YamlPolicyEngine", () => {
     expect(result.decision).toBe("deny");
     expect(result.matchedRule).toBe("default");
   });
+
+  /* ---- 15. Wildcard and Regex tool_name matching ---- */
+
+  it("matches tool_name with a wildcard pattern", async () => {
+    const dir = freshDir();
+    const path = writePolicyFile(dir, [
+      {
+        name: "allow-calendar-wildcard",
+        match: { tool_name: "calendar.*" },
+        effect: "allow",
+      },
+    ]);
+
+    const engine = new YamlPolicyEngine(path);
+
+    // Matching calls
+    const res1 = await engine.evaluate(makeCall({ tool: "calendar.read" }));
+    const res2 = await engine.evaluate(makeCall({ tool: "calendar.write" }));
+    expect(res1.decision).toBe("allow");
+    expect(res1.matchedRule).toBe("allow-calendar-wildcard");
+    expect(res2.decision).toBe("allow");
+    expect(res2.matchedRule).toBe("allow-calendar-wildcard");
+
+    // Non-matching calls
+    const res3 = await engine.evaluate(makeCall({ tool: "email.send" }));
+    expect(res3.decision).toBe("deny");
+  });
+
+  it("matches tool_name with a regex pattern", async () => {
+    const dir = freshDir();
+    const path = writePolicyFile(dir, [
+      {
+        name: "allow-ledger-regex",
+        match: { tool_name: "/^ledger\\..*/" },
+        effect: "allow",
+      },
+    ]);
+
+    const engine = new YamlPolicyEngine(path);
+
+    // Matching calls
+    const res1 = await engine.evaluate(makeCall({ tool: "ledger.write_transaction" }));
+    const res2 = await engine.evaluate(makeCall({ tool: "ledger.read" }));
+    expect(res1.decision).toBe("allow");
+    expect(res1.matchedRule).toBe("allow-ledger-regex");
+    expect(res2.decision).toBe("allow");
+    expect(res2.matchedRule).toBe("allow-ledger-regex");
+
+    // Non-matching calls
+    const res3 = await engine.evaluate(makeCall({ tool: "calendar.read" }));
+    expect(res3.decision).toBe("deny");
+  });
 });

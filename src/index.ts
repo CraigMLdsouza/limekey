@@ -61,7 +61,7 @@ const app = Fastify({ logger: true });
 
 // --- Global error handler ---------------------------------------------------
 
-app.setErrorHandler(async (error, _req, reply) => {
+app.setErrorHandler(async (error: any, _req, reply) => {
   app.log.error(error);
   const statusCode = (error as { statusCode?: number }).statusCode ?? 500;
   return reply.code(statusCode).send({
@@ -208,7 +208,11 @@ app.post("/v0/authorize", async (req, reply) => {
   if (finalDecision === "allow") {
     return reply.code(200).send({ decision: "allow" });
   }
-  return reply.code(403).send({ decision: "deny" });
+  return reply.code(403).send({
+    decision: "deny",
+    matched_rule: result.matchedRule,
+    reason: `Operation denied by policy rule: "${result.matchedRule}"`,
+  });
 });
 
 // ---------------------------------------------------------------------------

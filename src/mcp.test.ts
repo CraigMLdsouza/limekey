@@ -230,6 +230,8 @@ describe("Limekey MCP Server", () => {
 
     const content = JSON.parse(res.result.content[0].text);
     expect(content.decision).toBe("deny");
+    expect(content.matched_rule).toBe("default");
+    expect(content.reason).toBe('Operation denied by policy rule: "default"');
   });
 
   it("rejects request with missing token", async () => {
