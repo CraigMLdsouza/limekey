@@ -24,6 +24,7 @@ export class UpstreamManager extends EventEmitter {
   private readonly idMap = new RequestIdMap();
   private proc: ReturnType<typeof spawn> | null = null;
   private crashed = false;
+  private initializeResult: unknown = null;
 
   constructor(cfg: UpstreamConfig) {
     super();
@@ -131,7 +132,7 @@ export class UpstreamManager extends EventEmitter {
     });
 
     // Complete the initialize handshake within startupTimeoutMs.
-    await this.sendInternal(
+    const initRes = await this.sendInternal(
       {
         jsonrpc: "2.0",
         id: null, // replaced with proxy-generated ID inside sendInternal
@@ -145,10 +146,19 @@ export class UpstreamManager extends EventEmitter {
       startupTimeoutMs,
     );
 
+    this.initializeResult = initRes.result;
+
     // Send the required initialized notification (no response expected).
     this.proc.stdin.write(
       JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n",
     );
+  }
+
+  /**
+   * Returns the cached initialize handshake response from the upstream server.
+   */
+  getInitializeResult(): unknown {
+    return this.initializeResult;
   }
 
   /**
