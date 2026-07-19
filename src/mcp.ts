@@ -242,7 +242,7 @@ async function handleProxyRequest(
 
   if (finalDecision === "deny") {
     // Return MCP-native tool error — upstream never sees this request
-    sendProxyDenial(clientId, authReq.requestId);
+    sendProxyDenial(clientId, authReq.requestId, policyResult.matchedRule);
     return;
   }
 
@@ -441,8 +441,11 @@ async function handleAuthorizeToolCall(id: number | string, args: unknown) {
   if (finalDecision === "allow") {
     sendToolResult(id, { decision: "allow" });
   } else {
-    // In standalone mode expose the decision only — no rule names in responses
-    sendToolResult(id, { decision: "deny" }, true);
+    sendToolResult(id, {
+      decision: "deny",
+      matched_rule: result.matchedRule,
+      reason: `Operation denied by policy rule: "${result.matchedRule}"`,
+    }, true);
   }
 }
 
@@ -477,17 +480,17 @@ function sendError(
   } as JsonRpcResponse);
 }
 
-/** Policy denial response — MCP-native isError, minimal information. */
-function sendProxyDenial(id: number | string, requestId: string) {
+/** Policy denial response — MCP-native isError with explainability. */
+function sendProxyDenial(id: number | string, requestId: string, matchedRule: string) {
   sendResponse(id, {
     content: [
       {
         type: "text",
-        text: "Operation denied by LimeKey policy.",
+        text: `Operation denied by LimeKey policy rule: "${matchedRule}".`,
       },
     ],
     isError: true,
-    _meta: { request_id: requestId },
+    _meta: { request_id: requestId, matched_rule: matchedRule },
   });
 }
 
