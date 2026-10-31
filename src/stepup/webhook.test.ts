@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import crypto from "node:crypto";
 import { WebhookStepUpProvider, type StepUpRequest } from "./webhook.js";
 
 /* ------------------------------------------------------------------ */
@@ -158,6 +159,7 @@ describe("WebhookStepUpProvider", () => {
       principal: "user@example.com",
       toolName: "delete_database",
       argumentsSummary: '{"target":"production"}',
+      nonce: expect.any(String),
     });
   });
 
@@ -169,5 +171,70 @@ describe("WebhookStepUpProvider", () => {
     const result = await provider.requestApproval(sampleRequest);
 
     expect(result).toBe("timeout");
+  });
+
+  // ---- 8. Verify HMAC signature and nonce validation -------------------
+
+  it("returns 'approved' when signature and nonce are valid", async () => {
+    const secret = "test-secret-key-123456";
+    const { server, url } = await startServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => {
+        const reqBody = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+        const nonce = reqBody.nonce;
+        const outcome = "approved";
+        const signature = crypto.createHmac("sha256", secret)
+          .update(`${outcome}:${nonce}`)
+          .digest("hex");
+
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ outcome, signature, nonce }));
+      });
+    });
+    servers.push(server);
+
+    const provider = new WebhookStepUpProvider(url, 5, "deny", secret);
+    const result = await provider.requestApproval(sampleRequest);
+
+    expect(result).toBe("approved");
+  });
+
+  it("returns 'denied' when signature is invalid/missing", async () => {
+    const secret = "test-secret-key-123456";
+    const { server, url } = await startServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => {
+        const reqBody = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+        res.writeHead(200, { "content-type": "application/json" });
+        // Return bad signature
+        res.end(JSON.stringify({ outcome: "approved", signature: "bad-sig", nonce: reqBody.nonce }));
+      });
+    });
+    servers.push(server);
+
+    const provider = new WebhookStepUpProvider(url, 5, "deny", secret);
+    const result = await provider.requestApproval(sampleRequest);
+
+    expect(result).toBe("denied");
+  });
+
+  it("returns 'denied' when nonce is replayed/different", async () => {
+    const secret = "test-secret-key-123456";
+    const { server, url } = await startServer((req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      // Return wrong/replayed nonce
+      const signature = crypto.createHmac("sha256", secret)
+        .update("approved:replayed-nonce")
+        .digest("hex");
+      res.end(JSON.stringify({ outcome: "approved", signature, nonce: "replayed-nonce" }));
+    });
+    servers.push(server);
+
+    const provider = new WebhookStepUpProvider(url, 5, "deny", secret);
+    const result = await provider.requestApproval(sampleRequest);
+
+    expect(result).toBe("denied");
   });
 });

@@ -279,4 +279,42 @@ describe("TokenValidator", () => {
 
     expect(result.agentId).toBe("special-agent");
   });
+
+  /* ---------- session binding (T0-5) ---------- */
+
+  it("accepts a token bound to a session when the correct session_id is provided", async () => {
+    const validator = new TokenValidator(makeConfig());
+    const token = await mintToken({ session_id: "sess-123" });
+
+    const result = await validator.validate(token, "sess-123");
+    expect(result.agentId).toBe("agent-abc");
+  });
+
+  it("rejects a token bound to a session when a different session_id is provided", async () => {
+    const validator = new TokenValidator(makeConfig());
+    const token = await mintToken({ session_id: "sess-123" });
+
+    await expect(validator.validate(token, "sess-wrong")).rejects.toThrow(TokenValidationError);
+    await expect(validator.validate(token, "sess-wrong")).rejects.toMatchObject({
+      code: "invalid_signature",
+    });
+  });
+
+  it("rejects a token bound to a session when no session_id is provided", async () => {
+    const validator = new TokenValidator(makeConfig());
+    const token = await mintToken({ session_id: "sess-123" });
+
+    await expect(validator.validate(token)).rejects.toThrow(TokenValidationError);
+    await expect(validator.validate(token)).rejects.toMatchObject({
+      code: "invalid_signature",
+    });
+  });
+
+  it("accepts an unbound token when no session_id is provided", async () => {
+    const validator = new TokenValidator(makeConfig());
+    const token = await mintToken(); // unbound
+
+    const result = await validator.validate(token);
+    expect(result.agentId).toBe("agent-abc");
+  });
 });

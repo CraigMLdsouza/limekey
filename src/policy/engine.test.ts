@@ -419,4 +419,28 @@ describe("YamlPolicyEngine", () => {
     const res3 = await engine.evaluate(makeCall({ tool: "calendar.read" }));
     expect(res3.decision).toBe("deny");
   });
+
+  it("safely times out and denies catastrophic backtracking regexes (ReDoS mitigation)", async () => {
+    const dir = freshDir();
+    const path = writePolicyFile(dir, [
+      {
+        name: "redos-vulnerable",
+        match: { tool_name: "/(a+)+$/" },
+        effect: "allow",
+      },
+    ]);
+
+    const engine = new YamlPolicyEngine(path);
+
+    const startTime = Date.now();
+    // Catastrophic backtracking input
+    const result = await engine.evaluate(makeCall({ tool: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac" }));
+    const duration = Date.now() - startTime;
+
+    // It must deny because matching timed out
+    expect(result.decision).toBe("deny");
+    expect(result.matchedRule).toBe("default");
+    // It must have finished in a very short time (under 100ms) instead of hanging the process
+    expect(duration).toBeLessThan(200);
+  });
 });

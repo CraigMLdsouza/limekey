@@ -37,6 +37,7 @@ const stepUp = config.step_up
       config.step_up.webhook_url,
       config.step_up.timeout_seconds,
       config.step_up.on_timeout,
+      config.step_up.webhook_secret,
     )
   : null;
 
@@ -45,10 +46,18 @@ const stepUp = config.step_up
 // ---------------------------------------------------------------------------
 
 let buffer = "";
+const MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB maximum buffer limit to prevent OOM DoS (T0-4)
 
 function listenToStdin() {
   process.stdin.on("data", (chunk) => {
     buffer += chunk.toString("utf-8");
+
+    if (buffer.length > MAX_BUFFER_SIZE) {
+      buffer = ""; // Clear buffer to prevent OOM
+      process.stderr.write("[limekey] MCP buffer limit exceeded (10MB max). Resetting to prevent OOM.\n");
+      return;
+    }
+
     let newlineIndex;
     while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
       const line = buffer.slice(0, newlineIndex).trim();
@@ -182,10 +191,12 @@ async function handleProxyRequest(
     return;
   }
 
+  const sessionId = typeof toolArgs.session_id === "string" ? toolArgs.session_id : undefined;
+
   // Token validation
   let validated: { agentId: string; principal: string };
   try {
-    validated = await tokenValidator.validate(bearerToken);
+    validated = await tokenValidator.validate(bearerToken, sessionId);
   } catch (err) {
     if (err instanceof TokenValidationError) {
       sendToolResult(clientId, { error: err.code, message: err.message }, true);
@@ -386,7 +397,7 @@ async function handleAuthorizeToolCall(id: number | string, args: unknown) {
 
   let validated: { agentId: string; principal: string };
   try {
-    validated = await tokenValidator.validate(bearerToken);
+    validated = await tokenValidator.validate(bearerToken, sessionId);
   } catch (err) {
     if (err instanceof TokenValidationError) {
       sendToolResult(id, { error: err.code, message: err.message }, true);
@@ -511,10 +522,35 @@ async function start() {
     const startupTimeoutMs = config.upstream.startup_timeout * 1000;
     upstream = new UpstreamManager(config.upstream);
 
-    upstream.on("crash", () => {
-      process.stderr.write("[limekey-proxy] upstream crashed — shutting down\n");
-      shutdown();
-    });
+    let reconnectAttempts = 0;
+    let isReconnecting = false;
+
+    const handleUpstreamCrash = () => {
+      if (isReconnecting) return;
+      isReconnecting = true;
+
+      // Exponential backoff reconnect: 1s, 2s, 4s, 8s, up to 15s max (T1-3)
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 15000);
+      reconnectAttempts++;
+
+      process.stderr.write(`[limekey-proxy] upstream crashed — attempting reconnect in ${delay}ms (attempt ${reconnectAttempts})\n`);
+
+      setTimeout(async () => {
+        try {
+          upstream = new UpstreamManager(config.upstream!);
+          upstream.on("crash", handleUpstreamCrash);
+          await upstream.start(startupTimeoutMs);
+          process.stderr.write("[limekey-proxy] upstream successfully reconnected!\n");
+          reconnectAttempts = 0;
+          isReconnecting = false;
+        } catch (err) {
+          isReconnecting = false;
+          handleUpstreamCrash();
+        }
+      }, delay);
+    };
+
+    upstream.on("crash", handleUpstreamCrash);
 
     await upstream.start(startupTimeoutMs);
     process.stderr.write("[limekey-proxy] upstream ready, accepting client connections\n");

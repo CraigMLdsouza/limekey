@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import yaml from "js-yaml";
+import vm from "node:vm";
 import type { PolicyEngine, PolicyResult, Rule, RuleMatch } from "./types.js";
 import type { AuthorizationRequest } from "../types/authorization.js";
 
@@ -13,6 +14,7 @@ interface RuleFile {
  */
 export class YamlPolicyEngine implements PolicyEngine {
   private rules: Rule[];
+  private vmContext = vm.createContext({});
 
   constructor(policyFilePath: string) {
     const raw = readFileSync(policyFilePath, "utf-8");
@@ -64,8 +66,9 @@ export class YamlPolicyEngine implements PolicyEngine {
     if (pattern.startsWith("/") && pattern.endsWith("/")) {
       try {
         const regexStr = pattern.slice(1, -1);
-        const regex = new RegExp(regexStr);
-        return regex.test(tool);
+        // Use Node's built-in vm module with a shared context and 50ms timeout to prevent ReDoS (T1-1)
+        const script = new vm.Script(`new RegExp(${JSON.stringify(regexStr)}).test(${JSON.stringify(tool)})`);
+        return script.runInContext(this.vmContext, { timeout: 50 });
       } catch {
         return false;
       }
@@ -76,8 +79,9 @@ export class YamlPolicyEngine implements PolicyEngine {
         const regexStr = "^" + pattern
           .replace(/[-\/\\^$+?.()|[\]{}]/g, '\\$&') // escape special characters
           .replace(/\*/g, ".*") + "$";
-        const regex = new RegExp(regexStr);
-        return regex.test(tool);
+        // Also use vm with a shared context and 50ms timeout for wildcards to guarantee complete ReDoS safety
+        const script = new vm.Script(`new RegExp(${JSON.stringify(regexStr)}).test(${JSON.stringify(tool)})`);
+        return script.runInContext(this.vmContext, { timeout: 50 });
       } catch {
         return false;
       }

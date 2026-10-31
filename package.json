@@ -17,6 +17,7 @@
     "mcp:start": "node dist/mcp.js"
   },
   "dependencies": {
+    "@fastify/rate-limit": "^11.1.0",
     "fastify": "^5.2.1",
     "jose": "^5.6.3",
     "js-yaml": "^4.1.0",
